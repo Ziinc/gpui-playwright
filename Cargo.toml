@@ -1,0 +1,18 @@
+[workspace]
+resolver = "2"
+members = ["crates/selectors", "crates/server", "examples/todo"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+repository = "https://github.com/Ziinc/gpui-playwright"
+
+[workspace.dependencies]
+gpui-playwright = { path = "crates/server", version = "0.1.0" }
+gpui-playwright-selectors = { path = "crates/selectors", version = "0.1.0" }
+# The gpui-pre snapshot gpui-kit 0.7.3 is built against.
+gpui = { package = "gpui-pre", version = "=0.3.9" }
+gpui-kit = { version = "=0.7.3", default-features = false }
+regex = "1"
+serde_json = "1"
