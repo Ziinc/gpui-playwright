@@ -56,7 +56,13 @@ pub(crate) fn capture(window: &Window) -> Option<RgbaImage> {
             return None;
         }
         let mut rgba = Vec::with_capacity((width * height * 4) as usize);
-        for pixel in reply.data.as_chunks::<4>().0.iter().take((width * height) as usize) {
+        for pixel in reply
+            .data
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .take((width * height) as usize)
+        {
             rgba.extend_from_slice(&[pixel[2], pixel[1], pixel[0], 255]);
         }
         RgbaImage::from_raw(width, height, rgba)
