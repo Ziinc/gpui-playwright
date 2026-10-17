@@ -16,3 +16,12 @@ gpui = { package = "gpui-pre", version = "=0.3.9" }
 gpui-kit = { version = "=0.7.3", default-features = false }
 regex = "1"
 serde_json = "1"
+
+# gpui-kit 0.7.3 plus the text, placeholder, description and alt-text
+# observation gpui-playwright reads (Ziinc/gpui-kit, rebased on v0.7.3).
+[patch.crates-io]
+gpui-kit = { git = "https://github.com/Ziinc/gpui-kit", rev = "7ea1125954e6701d849fd448aab08ab2ac63d07f" }
+gpui-base = { git = "https://github.com/Ziinc/gpui-kit", rev = "7ea1125954e6701d849fd448aab08ab2ac63d07f" }
+gpui-component = { git = "https://github.com/Ziinc/gpui-kit", rev = "7ea1125954e6701d849fd448aab08ab2ac63d07f" }
+gpui-component-macros = { git = "https://github.com/Ziinc/gpui-kit", rev = "7ea1125954e6701d849fd448aab08ab2ac63d07f" }
+gpui-kit-assets = { git = "https://github.com/Ziinc/gpui-kit", rev = "7ea1125954e6701d849fd448aab08ab2ac63d07f" }

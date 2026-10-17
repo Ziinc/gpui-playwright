@@ -10,9 +10,11 @@
 use gpui_kit::{
     component::{
         ActiveTheme, IconName, Sizable, Theme, ThemeMode,
+        avatar::Avatar,
         button::{Button, ButtonVariants},
         checkbox::Checkbox,
         input::{Input, InputEvent, InputState},
+        label::Label,
     },
     *,
 };
@@ -127,12 +129,7 @@ impl Render for TodoView {
                             .flex()
                             .items_baseline()
                             .gap_3()
-                            .child(
-                                div()
-                                    .text_2xl()
-                                    .font_weight(FontWeight::BOLD)
-                                    .child("Todos"),
-                            )
+                            .child(Label::new("Todos").text_2xl().font_weight(FontWeight::BOLD))
                             .child(
                                 div()
                                     .id("remaining")
@@ -144,19 +141,27 @@ impl Render for TodoView {
                             ),
                     )
                     .child(
-                        Button::new("theme-toggle")
-                            .ghost()
-                            .label(if dark { "Light" } else { "Dark" })
-                            .icon(if dark { IconName::Sun } else { IconName::Moon })
-                            .on_click(move |_, window, cx| {
-                                let mode = if dark {
-                                    ThemeMode::Light
-                                } else {
-                                    ThemeMode::Dark
-                                };
-                                Theme::change(mode, Some(window), cx);
-                                cx.refresh_windows();
-                            }),
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_2()
+                            .child(Avatar::new().name("Ada Lovelace").small())
+                            .child(
+                                Button::new("theme-toggle")
+                                    .ghost()
+                                    .tooltip("Switch theme")
+                                    .label(if dark { "Light" } else { "Dark" })
+                                    .icon(if dark { IconName::Sun } else { IconName::Moon })
+                                    .on_click(move |_, window, cx| {
+                                        let mode = if dark {
+                                            ThemeMode::Light
+                                        } else {
+                                            ThemeMode::Dark
+                                        };
+                                        Theme::change(mode, Some(window), cx);
+                                        cx.refresh_windows();
+                                    }),
+                            ),
                     ),
             )
             .child(

@@ -96,3 +96,13 @@ test('goto runs the app route', async ({ page }) => {
   await expect(page.getByRole('checkbox')).toHaveText(['Write a Playwright test']);
   await expect(page.goto('todo://nowhere')).rejects.toThrow('no route for todo://nowhere');
 });
+
+test('finds painted text, placeholders, titles and alt text', async ({ page }) => {
+  await expect(page.getByText('Todos', { exact: true })).toBeVisible();
+  await page.getByPlaceholder('What needs to be done?').fill('Water plants');
+  await page.getByRole('button', { name: 'Add' }).click();
+  await expect(page.getByText('Water plants')).toBeVisible();
+  await expect(page.getByTitle('Switch theme')).toBeVisible();
+  await expect(page.getByAltText('Ada Lovelace')).toBeVisible();
+  await expect(page.getByRole('img', { name: 'Ada Lovelace' })).toHaveCount(1);
+});
