@@ -57,6 +57,10 @@ const EXPECTED_ERRORS = [
   /Taking a screenshot failed/,
   /Node is not an <input>/,
   /no route for/,
+  // The script chaos throws these on purpose.
+  /Maximum call stack size exceeded/,
+  /Cannot read property 'x' of null|cannot read property 'x' of null/i,
+  /Error: nope/,
 ];
 
 async function alive() {
@@ -202,6 +206,9 @@ async function randomAction(page) {
     async () => page.screenshot({ timeout }),
     async () => locator().screenshot({ timeout }),
     async () => page.evaluate('1 + 1'),
+    async () => page.evaluate(pick(SCRIPTS)),
+    async () => locator().evaluate((e, a) => [e.textContent, e.getAttribute(a)], pick(['title', 'alt', 'x']), { timeout }),
+    async () => page.waitForFunction(() => document.querySelectorAll('internal:role=checkbox').length >= 0, null, { timeout }),
     async () => page.goto('https://example.com'),
     async () => page.waitForTimeout(int(30)),
   ];
@@ -219,6 +226,18 @@ async function randomAction(page) {
     clearTimeout(timer);
   }
 }
+
+// Scripts that throw, allocate, recurse or return odd values.
+const SCRIPTS = [
+  'todos()',
+  'null.x',
+  'new Array(1e5).fill("x").join("")',
+  '(function f() { return f(); })()',
+  '({ a: [1, { b: NaN }], d: new Date(0), r: /x/g, n: -0, big: 10n })',
+  'Promise.reject(new Error("nope"))',
+  'document.body.textContent',
+  'todos(1, 2, 3)',
+];
 
 async function checkInvariants(page, label) {
   const boxes = await page.getByRole('checkbox').count();

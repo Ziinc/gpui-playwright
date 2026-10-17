@@ -40,6 +40,8 @@ pub(crate) struct Hooks {
     pub new_page: Option<OpenPageHook>,
     pub color_scheme: Option<ColorSchemeHook>,
     pub navigate: Option<NavigateHook>,
+    #[cfg(feature = "evaluate")]
+    pub functions: HashMap<String, crate::script::ExposedFunction>,
 }
 
 enum Object {
@@ -54,6 +56,12 @@ enum Object {
         path: Vec<ElementId>,
     },
     RequestContext,
+    /// A script result `evaluateHandle` or `waitForFunction` returned, kept
+    /// as its `SerializedValue`.
+    JsHandle {
+        page: String,
+        value: Value,
+    },
     /// Objects that exist for the client's sake and answer calls with no-ops.
     Inert,
 }
@@ -364,6 +372,7 @@ impl Session {
                 Some(Object::Frame { .. }) => "Frame",
                 Some(Object::Element { .. }) => "ElementHandle",
                 Some(Object::RequestContext) => "APIRequestContext",
+                Some(Object::JsHandle { .. }) => "JSHandle",
                 Some(Object::Inert) => "Inert",
             }
         };
@@ -375,6 +384,16 @@ impl Session {
             ("BrowserContext", method) => self.context_call(call, method, cx).await,
             ("Page", method) => self.page_call(call, method, cx).await,
             ("Frame" | "ElementHandle", method) => self.frame_call(call, method, cx).await,
+            ("JSHandle", "jsonValue") => match self.state.borrow().objects.get(&call.guid) {
+                Some(Object::JsHandle { value, .. }) => Ok(json!({"value": value})),
+                _ => Err(PwError::closed()),
+            },
+            ("JSHandle", "dispose") => {
+                self.dispose(&call.guid);
+                Ok(Value::Null)
+            }
+            ("JSHandle", "getPropertyList") => Ok(json!({"properties": []})),
+            ("JSHandle", method) => self.frame_call(call, method, cx).await,
             ("APIRequestContext", "dispose") => {
                 self.dispose(&call.guid);
                 Ok(Value::Null)
@@ -648,7 +667,9 @@ impl Session {
         let state = self.state.borrow();
         let page = match state.objects.get(guid) {
             Some(Object::Page(_)) => guid.to_owned(),
-            Some(Object::Frame { page }) | Some(Object::Element { page, .. }) => page.clone(),
+            Some(Object::Frame { page })
+            | Some(Object::Element { page, .. })
+            | Some(Object::JsHandle { page, .. }) => page.clone(),
             _ => return Err(PwError::closed()),
         };
         match state.objects.get(&page) {
@@ -1048,13 +1069,159 @@ impl Session {
                     .collect();
                 Ok(json!({"value": serialized::array(texts)}))
             }
+            #[cfg(feature = "evaluate")]
             "evaluateExpression"
             | "evaluateExpressionHandle"
             | "evalOnSelector"
             | "evalOnSelectorAll"
-            | "waitForFunction" => Err(PwError::unsupported("JavaScript evaluation")),
+            | "waitForFunction" => self.script_call(call, method, &page, window, cx).await,
+            #[cfg(not(feature = "evaluate"))]
+            "evaluateExpression"
+            | "evaluateExpressionHandle"
+            | "evalOnSelector"
+            | "evalOnSelectorAll"
+            | "waitForFunction" => Err(PwError::unsupported(
+                "JavaScript evaluation without gpui-playwright's `evaluate` feature",
+            )),
             method => Err(PwError::unsupported(&format!("Frame.{method}"))),
         }
+    }
+
+    /// `evaluate` and its variants. Scripts run against a snapshot of the page
+    /// taken when the call arrives; `waitForFunction` takes a new one per poll.
+    #[cfg(feature = "evaluate")]
+    async fn script_call(
+        &self,
+        call: &Call,
+        method: &str,
+        page: &str,
+        window: AnyWindowHandle,
+        cx: &mut AsyncApp,
+    ) -> Result<Value, PwError> {
+        use crate::script::{self, Handle, Subject};
+
+        let expression = call.str("expression").unwrap_or_default().to_owned();
+        let is_function = call.params.get("isFunction").and_then(Value::as_bool);
+        let arg = call.params.get("arg").cloned().unwrap_or(Value::Null);
+        let url = self
+            .with_page(page, |state| state.url.clone())
+            .unwrap_or_default();
+        let target = match method {
+            "evalOnSelector" | "evalOnSelectorAll" => Some(self.target(call)?),
+            _ => None,
+        };
+        let this_handle = match self.state.borrow().objects.get(&call.guid) {
+            Some(Object::Element { path, .. }) => Some(Ok(path.clone())),
+            Some(Object::JsHandle { value, .. }) => Some(Err(value.clone())),
+            _ => None,
+        };
+        let handle_guids: Vec<String> = arg["handles"]
+            .as_array()
+            .map(|handles| {
+                handles
+                    .iter()
+                    .filter_map(|h| h["guid"].as_str().map(str::to_owned))
+                    .collect()
+            })
+            .unwrap_or_default();
+        let run = |cx: &mut AsyncApp| -> Result<Value, PwError> {
+            let snapshot = capture(window, cx)?;
+            let index_of = |path: &[gpui::ElementId]| {
+                snapshot
+                    .index_of(path)
+                    .ok_or_else(|| PwError::new("Element is not attached to the DOM"))
+            };
+            let subject = match (&target, &this_handle) {
+                (Some(target), _) if method == "evalOnSelectorAll" => {
+                    Subject::Elements(target.resolve(&snapshot))
+                }
+                (Some(target), _) => match target.single(&snapshot)? {
+                    Some(index) => Subject::Element(index),
+                    None => {
+                        return Err(PwError::new(format!(
+                            "Failed to find element matching selector \"{}\"",
+                            call.str("selector").unwrap_or_default()
+                        )));
+                    }
+                },
+                (None, Some(Ok(path))) => Subject::Element(index_of(path)?),
+                (None, Some(Err(value))) => Subject::Value(value.clone()),
+                (None, None) => Subject::None,
+            };
+            let mut handles = Vec::new();
+            for guid in &handle_guids {
+                handles.push(match self.state.borrow().objects.get(guid) {
+                    Some(Object::Element { path, .. }) => Handle::Element(index_of(path)?),
+                    Some(Object::JsHandle { value, .. }) => Handle::Value(value.clone()),
+                    _ => return Err(PwError::new("JSHandle is disposed")),
+                });
+            }
+            let page = script::Page {
+                tree: std::rc::Rc::new(snapshot.tree.clone()),
+                title: snapshot.title.clone(),
+                url: url.clone(),
+                viewport: window
+                    .update(cx, |_, window, _| {
+                        let size = window.viewport_size();
+                        (f32::from(size.width) as f64, f32::from(size.height) as f64)
+                    })
+                    .unwrap_or_default(),
+            };
+            let functions = self.hooks.functions.clone();
+            cx.update(|cx| {
+                script::evaluate(
+                    &page,
+                    &expression,
+                    is_function,
+                    subject,
+                    &arg,
+                    &handles,
+                    &functions,
+                    cx,
+                )
+            })
+            .map_err(|message| PwError::new(format!("Error: {message}")))
+        };
+        match method {
+            "waitForFunction" => {
+                let value = self
+                    .retry(call, cx, |cx| {
+                        let value = run(cx)?;
+                        Ok(if truthy(&value) {
+                            Step::Done(value)
+                        } else {
+                            Step::Wait(vec![
+                                "  - waiting for the function to return a truthy value".into(),
+                            ])
+                        })
+                    })
+                    .await?;
+                Ok(json!({"handle": self.js_handle(page, value)}))
+            }
+            "evaluateExpressionHandle" => {
+                let value = run(cx)?;
+                Ok(json!({"handle": self.js_handle(page, value)}))
+            }
+            _ => Ok(json!({"value": run(cx)?})),
+        }
+    }
+
+    #[cfg(feature = "evaluate")]
+    fn js_handle(&self, page: &str, value: Value) -> Value {
+        let guid = self.guid("js-handle");
+        let frame = self.frame_of_page(page).unwrap_or_default();
+        let preview = serde_json::to_string(&serialized::decode(&value)).unwrap_or_default();
+        self.create(
+            &frame,
+            "JSHandle",
+            &guid,
+            json!({"preview": preview}),
+            Object::JsHandle {
+                page: page.to_owned(),
+                value,
+            },
+        );
+        json!({"guid": guid})
     }
 
     /// Clicks the target unless it already has focus, so key input reaches it.
@@ -1818,6 +1985,27 @@ impl Session {
                 .timer(Duration::from_millis(100))
                 .await;
         }
+    }
+}
+
+/// JavaScript truthiness of a `SerializedValue`.
+#[cfg(feature = "evaluate")]
+fn truthy(value: &Value) -> bool {
+    if let Some(v) = value.get("v").and_then(Value::as_str) {
+        return matches!(v, "Infinity" | "-Infinity");
+    }
+    match (
+        value.get("b"),
+        value.get("n"),
+        value.get("s"),
+        value.get("bi"),
+    ) {
+        (Some(b), ..) => b.as_bool().unwrap_or(false),
+        (_, Some(n), ..) => n.as_f64().is_some_and(|n| n != 0.),
+        (_, _, Some(s), _) => s.as_str().is_some_and(|s| !s.is_empty()),
+        (_, _, _, Some(bi)) => bi.as_str() != Some("0"),
+        // Objects, arrays, dates and regular expressions.
+        _ => true,
     }
 }
 

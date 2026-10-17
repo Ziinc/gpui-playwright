@@ -278,6 +278,16 @@ fn main() {
                             cx.notify();
                         });
                     })
+                    // Lets scripts read the list: `page.evaluate(() => todos())`.
+                    .expose_function("todos", |_, cx| {
+                        let todos: Vec<_> = self::store(cx)
+                            .read(cx)
+                            .todos
+                            .iter()
+                            .map(|todo| serde_json::json!({"title": todo.title, "done": todo.done}))
+                            .collect();
+                        Ok(serde_json::Value::Array(todos))
+                    })
                     // A deep link, so tests can `page.goto('todo://clear-completed')`.
                     .on_navigate(|url, _, cx| match url {
                         "todo://clear-completed" => {

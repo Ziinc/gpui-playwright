@@ -24,6 +24,8 @@ mod aria;
 mod expect;
 mod input;
 mod screenshot;
+#[cfg(feature = "evaluate")]
+mod script;
 mod session;
 mod snapshot;
 mod transport;
@@ -158,6 +160,20 @@ impl Server {
         navigate: impl Fn(&str, AnyWindowHandle, &mut App) -> Result<(), String> + 'static,
     ) -> Self {
         self.hooks.navigate = Some(Rc::new(navigate));
+        self
+    }
+
+    /// Makes `name(...args)` callable from page scripts, such as
+    /// `page.evaluate(() => todos())`. Arguments and the result travel as
+    /// JSON; an `Err` throws in the script with its message.
+    #[cfg(feature = "evaluate")]
+    pub fn expose_function(
+        mut self,
+        name: impl Into<String>,
+        function: impl Fn(Vec<serde_json::Value>, &mut App) -> Result<serde_json::Value, String>
+        + 'static,
+    ) -> Self {
+        self.hooks.functions.insert(name.into(), Rc::new(function));
         self
     }
 

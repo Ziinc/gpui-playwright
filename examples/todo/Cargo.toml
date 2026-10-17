@@ -8,8 +8,9 @@ license.workspace = true
 
 [features]
 default = ["playwright"]
-playwright = ["dep:gpui-playwright"]
+playwright = ["dep:gpui-playwright", "gpui-playwright/evaluate"]
 
 [dependencies]
 gpui-kit = { workspace = true, features = ["component", "assets"] }
 gpui-playwright = { workspace = true, optional = true }
+serde_json.workspace = true

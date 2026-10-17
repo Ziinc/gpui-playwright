@@ -19,6 +19,12 @@ base64 = "0.22"
 image = { version = "0.25", default-features = false, features = ["png"] }
 log = "0.4"
 tungstenite = "0.26"
+rquickjs = { version = "0.14", optional = true }
+
+[features]
+# `page.evaluate`, `locator.evaluate`, `waitForFunction` and
+# `Server::expose_function`, run by an embedded QuickJS.
+evaluate = ["dep:rquickjs"]
 
 [target.'cfg(any(target_os = "linux", target_os = "freebsd"))'.dependencies]
 raw-window-handle = "0.6"
