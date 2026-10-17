@@ -19,6 +19,7 @@ const endpoint = args.endpoint ?? 'ws://127.0.0.1:9333/';
 const { hostname, port } = new URL(endpoint);
 const seed = Number(args.seed ?? Date.now() % 100000);
 const steps = Number(args.steps ?? 300);
+const HANG_MS = 20_000;
 
 // mulberry32
 let state = seed >>> 0;
@@ -200,7 +201,19 @@ async function randomAction(page) {
     async () => page.goto('https://example.com'),
     async () => page.waitForTimeout(int(30)),
   ];
-  return pick(actions)();
+  const action = pick(actions);
+  const label = action.toString().replace('async () => ', '');
+  // Every call has a timeout or none of its own to wait on; one stuck this
+  // long is a hang.
+  let timer;
+  const watchdog = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`HANG: ${label} did not settle in ${HANG_MS}ms`)), HANG_MS);
+  });
+  try {
+    return await Promise.race([action(), watchdog]);
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 async function checkInvariants(page, label) {
