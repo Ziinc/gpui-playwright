@@ -9,12 +9,14 @@ use tungstenite::handshake::server::{ErrorResponse, Request, Response};
 use tungstenite::{Message, http};
 
 /// Playwright client minor versions whose protocol this server speaks.
-pub const SUPPORTED_MINORS: &[&str] = &["1.64"];
+pub const SUPPORTED_MINORS: &[&str] = &["1.58", "1.59", "1.60", "1.61", "1.62", "1.63", "1.64"];
 
 pub(crate) enum Event {
     Opened {
         connection: u64,
         outgoing: mpsc::Sender<String>,
+        /// The client's Playwright minor version, such as 64 for 1.64.
+        minor: u32,
     },
     Message {
         connection: u64,
@@ -88,6 +90,8 @@ fn serve(
         return Ok(());
     }
 
+    let minor = std::sync::Arc::new(std::sync::atomic::AtomicU32::new(0));
+    let handshake_minor = minor.clone();
     let callback =
         move |request: &Request, response: Response| -> Result<Response, ErrorResponse> {
             if let Some(token) = &token
@@ -103,6 +107,10 @@ fn serve(
             if let Some(message) = version_mismatch(agent) {
                 return Err(reject(http::StatusCode::PRECONDITION_REQUIRED, &message));
             }
+            handshake_minor.store(
+                client_minor(agent).unwrap_or_default(),
+                std::sync::atomic::Ordering::Relaxed,
+            );
             Ok(response)
         };
     let mut socket = tungstenite::accept_hdr(stream, callback)?;
@@ -114,6 +122,7 @@ fn serve(
     events.send_blocking(Event::Opened {
         connection,
         outgoing,
+        minor: minor.load(std::sync::atomic::Ordering::Relaxed),
     })?;
 
     let result = (|| -> Result<(), Box<dyn std::error::Error>> {
@@ -166,6 +175,16 @@ fn version_mismatch(user_agent: &str) -> Option<String> {
     }
 }
 
+/// The minor version in a `Playwright/1.64.1 ...` user agent.
+fn client_minor(user_agent: &str) -> Option<u32> {
+    user_agent
+        .strip_prefix("Playwright/")?
+        .split('.')
+        .nth(1)?
+        .parse()
+        .ok()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -176,7 +195,15 @@ mod tests {
             version_mismatch("Playwright/1.64.1 (x64; ubuntu 24.04) node/22.22"),
             None
         );
-        assert!(version_mismatch("Playwright/1.63.0 (x64)").is_some());
+        assert_eq!(version_mismatch("Playwright/1.58.2 (x64)"), None);
+        assert!(version_mismatch("Playwright/1.57.0 (x64)").is_some());
+        assert!(version_mismatch("Playwright/1.65.0 (x64)").is_some());
         assert_eq!(version_mismatch("curl/8"), None);
+    }
+
+    #[test]
+    fn parses_client_minor() {
+        assert_eq!(client_minor("Playwright/1.60.0 (x64) node/22"), Some(60));
+        assert_eq!(client_minor("curl/8"), None);
     }
 }

@@ -10,7 +10,8 @@ pub(crate) struct Call {
     pub guid: String,
     pub method: String,
     pub params: Value,
-    /// Milliseconds from the call's metadata; 0 means no timeout.
+    /// Milliseconds from the call's metadata, or its params before 1.64; 0
+    /// means no timeout.
     pub timeout: u64,
 }
 
@@ -31,6 +32,7 @@ impl Call {
         let params = message.get("params").cloned().unwrap_or(Value::Null);
         let timeout = message
             .pointer("/metadata/timeout")
+            .or_else(|| params.get("timeout"))
             .and_then(Value::as_f64)
             .unwrap_or(0.) as u64;
         Ok(Self {
@@ -198,5 +200,23 @@ pub(crate) mod serialized {
             return Value::Object(map);
         }
         Value::Null
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn reads_timeout_from_metadata_or_params() {
+        let call = Call::parse(
+            r#"{"id":1,"guid":"g","method":"m","params":{},"metadata":{"timeout":300}}"#,
+        )
+        .unwrap();
+        assert_eq!(call.timeout, 300);
+        // Clients before 1.64 send it with the params.
+        let call =
+            Call::parse(r#"{"id":1,"guid":"g","method":"m","params":{"timeout":500}}"#).unwrap();
+        assert_eq!(call.timeout, 500);
     }
 }

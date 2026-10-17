@@ -64,13 +64,13 @@ test('aria snapshot', async ({ page }) => {
   expect(snapshot).toContain('checkbox "Read the docs" [checked]');
 });
 
-test('screenshots', async ({ page }) => {
+test('screenshots', { tag: '@screenshot' }, async ({ page }) => {
   const shot = await page.screenshot();
   expect(shot.length).toBeGreaterThan(1000);
   await expect(page.getByRole('button', { name: 'Add' })).toHaveScreenshot('add-button.png');
 });
 
-test('color scheme follows emulateMedia', async ({ page }) => {
+test('color scheme follows emulateMedia', { tag: '@screenshot' }, async ({ page }) => {
   const add = page.getByRole('button', { name: 'Add' });
   await page.emulateMedia({ colorScheme: 'dark' });
   await expect(page.getByRole('button', { name: 'Light' })).toBeVisible();
@@ -88,4 +88,11 @@ test('keyboard shortcuts and mouse', async ({ page }) => {
   const box = await page.getByRole('checkbox', { name: 'Write a Playwright test' }).boundingBox();
   await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
   await expect(page.getByText('0 of 2 left')).toBeVisible();
+});
+
+test('goto runs the app route', async ({ page }) => {
+  await page.goto('todo://clear-completed');
+  await expect(page).toHaveURL('todo://clear-completed');
+  await expect(page.getByRole('checkbox')).toHaveText(['Write a Playwright test']);
+  await expect(page.goto('todo://nowhere')).rejects.toThrow('no route for todo://nowhere');
 });

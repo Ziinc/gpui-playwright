@@ -27,7 +27,13 @@ jobs:
       - run: cargo test --workspace
 
   e2e:
+    name: e2e (Playwright ${{ matrix.playwright }})
     runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        # Every client minor in transport::SUPPORTED_MINORS.
+        playwright: ["1.58.2", "1.59.1", "1.60.0", "1.61.1", "1.62.1", "1.63.0", "1.64.1"]
     steps:
       - uses: actions/checkout@v4
       - name: Install GPUI runtime, Xvfb and a software Vulkan driver
@@ -44,14 +50,31 @@ jobs:
       - run: cargo build -p todo
       - run: npm ci
         working-directory: e2e
-      - run: xvfb-run -a -s "-screen 0 1920x1080x24" npx playwright test
+      - name: Use Playwright ${{ matrix.playwright }}
+        if: matrix.playwright != '1.64.1'
+        run: npm install --no-save @playwright/test@${{ matrix.playwright }}
+        working-directory: e2e
+      - name: Playwright suite without a display (headless GPUI)
+        run: npx playwright test
         working-directory: e2e
         env:
           CI: "1"
+      - name: Playwright suite on Xvfb (with screenshots)
+        run: xvfb-run -a -s "-screen 0 1920x1080x24" npx playwright test
+        working-directory: e2e
+        env:
+          CI: "1"
+      - name: Chaos run (protocol abuse, connection churn, random UI walk)
+        if: matrix.playwright == '1.64.1'
+        run: |
+          GPUI_PLAYWRIGHT=9333 xvfb-run -a -s "-screen 0 1920x1080x24" ../target/debug/todo &
+          for i in $(seq 60); do curl -sf http://127.0.0.1:9333/ && break; sleep 2; done
+          node chaos/chaos.js --seed ${{ github.run_number }} --steps 300
+        working-directory: e2e
       - uses: actions/upload-artifact@v4
         if: failure()
         with:
-          name: playwright-report
+          name: playwright-report-${{ matrix.playwright }}
           path: |
             e2e/playwright-report
             e2e/test-results

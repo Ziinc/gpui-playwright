@@ -150,6 +150,17 @@ impl Server {
         self
     }
 
+    /// Handles `page.goto(url)`, for apps with their own routes or deep
+    /// links. The window is the page's; an `Err` fails the `goto` with its
+    /// message. Without it, `goto` is unsupported.
+    pub fn on_navigate(
+        mut self,
+        navigate: impl Fn(&str, AnyWindowHandle, &mut App) -> Result<(), String> + 'static,
+    ) -> Self {
+        self.hooks.navigate = Some(Rc::new(navigate));
+        self
+    }
+
     /// Starts listening and returns the WebSocket endpoint clients connect to.
     /// The endpoint is also printed to stdout for test runners to read.
     pub fn start(self, cx: &mut App) -> io::Result<String> {
@@ -166,6 +177,7 @@ impl Server {
 
         let hooks = Rc::new(self.hooks);
         let sessions: Rc<std::cell::RefCell<HashMap<u64, Session>>> = Default::default();
+        let claimed: Rc<std::cell::RefCell<Vec<AnyWindowHandle>>> = Default::default();
         cx.spawn({
             let sessions = sessions.clone();
             async move |cx| {
@@ -174,10 +186,12 @@ impl Server {
                         Event::Opened {
                             connection,
                             outgoing,
+                            minor,
                         } => {
-                            sessions
-                                .borrow_mut()
-                                .insert(connection, Session::new(outgoing, hooks.clone()));
+                            sessions.borrow_mut().insert(
+                                connection,
+                                Session::new(outgoing, minor, hooks.clone(), claimed.clone()),
+                            );
                         }
                         Event::Message { connection, text } => {
                             let session = sessions.borrow().get(&connection).cloned();

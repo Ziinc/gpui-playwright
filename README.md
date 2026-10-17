@@ -50,6 +50,8 @@ gpui_kit::application().run(|cx| {
             .on_new_page(|cx| open_main_window(cx))
             // Optional: honour `colorScheme` and `page.emulateMedia()`.
             .on_color_scheme(|scheme, cx| apply_theme(scheme, cx))
+            // Optional: route `page.goto(url)`, such as a deep link.
+            .on_navigate(|url, window, cx| open_route(url, window, cx))
             .start(cx)
             .expect("start gpui-playwright");
     }
@@ -86,14 +88,17 @@ selectable.
 | `textContent`, `innerText`, `inputValue`, `getAttribute`, `boundingBox`, `isVisible`/`isEnabled`/`isChecked`/..., `count`, `all`, `allInnerTexts`, `allTextContents`, `ariaSnapshot` | Yes |
 | `expect(locator)`: `toBeVisible`, `toBeHidden`, `toBeEnabled`, `toBeDisabled`, `toBeEditable`, `toBeFocused`, `toBeChecked`, `toBeEmpty`, `toBeAttached`, `toBeInViewport`, `toHaveText`, `toContainText`, `toHaveValue`, `toHaveCount`, `toHaveAccessibleName`, `toHaveAccessibleDescription`, `toHaveRole`, `toHaveId`, `toHaveAttribute` | Yes |
 | `expect(page).toHaveTitle` | Yes (the window title) |
+| `page.goto`, `page.url()`, `expect(page).toHaveURL` | With `on_navigate`: the app routes the URL |
 | `page.screenshot`, `locator.screenshot`, `toHaveScreenshot` (clip, mask, maskColor, threshold, maxDiffPixels) | Yes |
 | `page.setViewportSize`, context `viewport`, `colorScheme`, `page.emulateMedia({ colorScheme })`, `bringToFront`, `close` | Yes |
 | Tracing (`trace: 'on'`), `route`, cookies, storage state | Accepted as no-ops; traces are empty |
-| `goto`, `setContent`, `evaluate`, `waitForFunction`, network, downloads, frames | Clear "not supported by GPUI apps" errors |
+| `reload`, `goBack`, `setContent`, `evaluate`, `waitForFunction`, network, downloads, frames | Clear "not supported by GPUI apps" errors |
 
-Playwright clients refuse a server whose minor version differs from theirs;
-this release speaks **1.64**. Use `@playwright/test@1.64.x`,
-`playwright==1.64.*` (Python), or the matching Java/.NET release.
+The server speaks Playwright **1.58 through 1.64** (`@playwright/test`,
+`playwright` for Python, or the matching Java/.NET release) and answers each
+client in its own version's protocol. CI runs the suite against every one.
+Other versions are refused at connect with Playwright's own version-mismatch
+message.
 
 ## Pages and contexts
 
@@ -109,10 +114,21 @@ this release speaks **1.64**. Use `@playwright/test@1.64.x`,
 ## Platforms
 
 Screenshots use GPUI's `render_to_image` where the platform implements it, and
-read the window back from the X server on X11. On Linux CI, run the app under
-Xvfb with a software Vulkan driver (see `.github/workflows/ci.yml`). Without a
-display GPUI starts headless, which does not render frames for Playwright to
-observe.
+read the window back from the X server on X11. Without a display GPUI starts
+headless: the server renders frames itself, so locators, actions and `expect`
+work, but screenshots need a visible window. On Linux CI, run screenshot tests
+under Xvfb with a software Vulkan driver (see `.github/workflows/ci.yml`).
+
+## Chaos testing
+
+`e2e/chaos/chaos.js` drives a running app with malformed protocol traffic,
+connection churn and a seeded random walk of locators and actions, and checks
+the app's invariants as it goes. A finding names the seed that reproduces it.
+
+```sh
+GPUI_PLAYWRIGHT=9333 cargo run -p todo &
+node e2e/chaos/chaos.js --seed 42 --steps 300
+```
 
 ## Repository
 

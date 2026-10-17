@@ -72,6 +72,8 @@ struct TodoView {
 
 impl TodoView {
     fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
+        // GPUI's headless platform ignores `TitlebarOptions::title`.
+        window.set_window_title("Todos");
         let input = cx.new(|cx| InputState::new(window, cx).placeholder("What needs to be done?"));
         cx.subscribe_in(&input, window, |this, _, event: &InputEvent, window, cx| {
             if let InputEvent::PressEnter { .. } = event {
@@ -173,6 +175,9 @@ impl Render for TodoView {
             .child(
                 div()
                     .id("todo-list")
+                    .flex_1()
+                    .min_h_0()
+                    .overflow_y_scroll()
                     .flex()
                     .flex_col()
                     .children(todos.into_iter().map(|todo| {
@@ -267,6 +272,17 @@ fn main() {
                             *store = TodoStore::seeded();
                             cx.notify();
                         });
+                    })
+                    // A deep link, so tests can `page.goto('todo://clear-completed')`.
+                    .on_navigate(|url, _, cx| match url {
+                        "todo://clear-completed" => {
+                            self::store(cx).update(cx, |store, cx| {
+                                store.todos.retain(|todo| !todo.done);
+                                cx.notify();
+                            });
+                            Ok(())
+                        }
+                        _ => Err(format!("no route for {url}")),
                     })
                     .on_color_scheme(|scheme, cx| {
                         let mode = match scheme {
