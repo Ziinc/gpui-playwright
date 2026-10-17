@@ -96,3 +96,31 @@ test('goto runs the app route', async ({ page }) => {
   await expect(page.getByRole('checkbox')).toHaveText(['Write a Playwright test']);
   await expect(page.goto('todo://nowhere')).rejects.toThrow('no route for todo://nowhere');
 });
+
+test('finds painted text, placeholders, titles and alt text', async ({ page }) => {
+  await expect(page.getByText('Todos', { exact: true })).toBeVisible();
+  await page.getByPlaceholder('What needs to be done?').fill('Water plants');
+  await page.getByRole('button', { name: 'Add' }).click();
+  await expect(page.getByText('Water plants')).toBeVisible();
+  await expect(page.getByTitle('Switch theme')).toBeVisible();
+  await expect(page.getByAltText('Ada Lovelace')).toBeVisible();
+  await expect(page.getByRole('img', { name: 'Ada Lovelace' })).toHaveCount(1);
+});
+
+test('evaluate runs scripts against the page', async ({ page }) => {
+  expect(await page.evaluate('1 + 1')).toBe(2);
+  expect(await page.evaluate(() => document.title)).toBe('Todos');
+  expect(await page.evaluate((n) => n * 2, 21)).toBe(42);
+  const first = page.getByRole('checkbox').first();
+  expect(await first.evaluate((el) => [el.textContent, el.checked])).toEqual(['Read the docs', true]);
+  expect(await page.getByRole('checkbox').evaluateAll((els) => els.length)).toBe(2);
+  expect(await page.evaluate(() => todos().map((t) => t.title))).toEqual(['Read the docs', 'Write a Playwright test']);
+  const handle = await page.evaluateHandle(() => ({ left: todos().filter((t) => !t.done).length }));
+  expect(await handle.jsonValue()).toEqual({ left: 1 });
+  await expect(page.evaluate(() => { throw new Error('boom'); })).rejects.toThrow('boom');
+
+  const added = page.waitForFunction(() => todos().length === 3);
+  await page.getByRole('textbox').fill('Ship it');
+  await page.getByRole('button', { name: 'Add' }).click();
+  await added;
+});

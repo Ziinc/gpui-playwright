@@ -2142,8 +2142,7 @@ dependencies = [
 [[package]]
 name = "gpui-base"
 version = "0.7.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2e9955b6f4b048fd50ca15fc8e225d80bb00ba9ebc8fecdddde5ad26dbef9270"
+source = "git+https://github.com/Ziinc/gpui-kit?rev=7ea1125954e6701d849fd448aab08ab2ac63d07f#7ea1125954e6701d849fd448aab08ab2ac63d07f"
 dependencies = [
  "aho-corasick",
  "anyhow",
@@ -2184,8 +2183,7 @@ dependencies = [
 [[package]]
 name = "gpui-component"
 version = "0.7.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "465a363235cd4062ef5f0953fc096fc764ed6f53dfbd9f409f669f93ea3b1ff9"
+source = "git+https://github.com/Ziinc/gpui-kit?rev=7ea1125954e6701d849fd448aab08ab2ac63d07f#7ea1125954e6701d849fd448aab08ab2ac63d07f"
 dependencies = [
  "anyhow",
  "chrono",
@@ -2232,8 +2230,7 @@ dependencies = [
 [[package]]
 name = "gpui-component-macros"
 version = "0.7.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5c0c9398aaf99e595d450e38eb44ff0c500df8c332b4783d5b72022e69525359"
+source = "git+https://github.com/Ziinc/gpui-kit?rev=7ea1125954e6701d849fd448aab08ab2ac63d07f#7ea1125954e6701d849fd448aab08ab2ac63d07f"
 dependencies = [
  "proc-macro-crate",
  "proc-macro2",
@@ -2556,8 +2553,7 @@ dependencies = [
 [[package]]
 name = "gpui-kit"
 version = "0.7.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0fac401f6b149bf33794da0942510240afd29b7b18556574e4cf17196b647066"
+source = "git+https://github.com/Ziinc/gpui-kit?rev=7ea1125954e6701d849fd448aab08ab2ac63d07f#7ea1125954e6701d849fd448aab08ab2ac63d07f"
 dependencies = [
  "gpui-base",
  "gpui-component",
@@ -2573,8 +2569,7 @@ dependencies = [
 [[package]]
 name = "gpui-kit-assets"
 version = "0.7.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b7abc281dcbfe51c16a7e73189521a3a771168c31e3ab0db99e21e481d1b1b9a"
+source = "git+https://github.com/Ziinc/gpui-kit?rev=7ea1125954e6701d849fd448aab08ab2ac63d07f#7ea1125954e6701d849fd448aab08ab2ac63d07f"
 dependencies = [
  "anyhow",
  "gpui-pre",
@@ -2598,6 +2593,7 @@ dependencies = [
  "log",
  "raw-window-handle",
  "regex",
+ "rquickjs",
  "serde_json",
  "tungstenite",
  "x11rb",
@@ -3185,6 +3181,11 @@ name = "hashbrown"
 version = "0.17.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ed5909b6e89a2db4456e54cd5f673791d7eca6732202bbf2a9cc504fe2f9b84a"
+dependencies = [
+ "allocator-api2",
+ "equivalent",
+ "foldhash 0.2.0",
+]
 
 [[package]]
 name = "heapless"
@@ -5690,6 +5691,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
 
 [[package]]
+name = "relative-path"
+version = "2.0.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f2a073568cd8b9c4825429d3e9fc5f52851b4f97cc1348800689408921e6b8f8"
+dependencies = [
+ "serde",
+]
+
+[[package]]
 name = "renderdoc-sys"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5774,6 +5784,35 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f1964b10c76125c36f8afe190065a4bf9a87bf324842c05701330bba9f1cacbb"
 dependencies = [
  "memchr",
+]
+
+[[package]]
+name = "rquickjs"
+version = "0.14.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a0a22bf72f515cc4189dd7c63d016f6de92a11eee98ddf7dd64794198f6eb34e"
+dependencies = [
+ "rquickjs-core",
+]
+
+[[package]]
+name = "rquickjs-core"
+version = "0.14.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6657979a24d543e5fc66f32cef2f47ca82ce8eb55cec5f7d59a12b7b570bbf24"
+dependencies = [
+ "hashbrown 0.17.1",
+ "relative-path",
+ "rquickjs-sys",
+]
+
+[[package]]
+name = "rquickjs-sys"
+version = "0.14.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cee271d0eeba64f0915b846cb7ae02e16faf3dfdffdca91731101d9d30fe3423"
+dependencies = [
+ "cc",
 ]
 
 [[package]]
@@ -6873,6 +6912,7 @@ version = "0.1.0"
 dependencies = [
  "gpui-kit",
  "gpui-playwright",
+ "serde_json",
 ]
 
 [[package]]

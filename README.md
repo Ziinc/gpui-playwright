@@ -34,6 +34,15 @@ playwright = ["dep:gpui-playwright"]
 
 [dependencies]
 gpui-playwright = { git = "https://github.com/Ziinc/gpui-playwright", optional = true }
+
+# Until these land in a gpui-kit release: rendered text, placeholders, titles
+# and alt text come from the Ziinc/gpui-kit fork (0.7.3 plus the patches).
+[patch.crates-io]
+gpui-kit = { git = "https://github.com/Ziinc/gpui-kit", rev = "7ea1125954e6701d849fd448aab08ab2ac63d07f" }
+gpui-base = { git = "https://github.com/Ziinc/gpui-kit", rev = "7ea1125954e6701d849fd448aab08ab2ac63d07f" }
+gpui-component = { git = "https://github.com/Ziinc/gpui-kit", rev = "7ea1125954e6701d849fd448aab08ab2ac63d07f" }
+gpui-component-macros = { git = "https://github.com/Ziinc/gpui-kit", rev = "7ea1125954e6701d849fd448aab08ab2ac63d07f" }
+gpui-kit-assets = { git = "https://github.com/Ziinc/gpui-kit", rev = "7ea1125954e6701d849fd448aab08ab2ac63d07f" }
 ```
 
 ```rust
@@ -71,16 +80,23 @@ leave it out.
 ## What maps onto a desktop app
 
 Elements come from gpui-kit's per-frame observation: role, accessible label,
-value, checked/disabled/focused/expanded/selected state, bounds and the GPUI
-element id. gpui-kit components register themselves; give your own elements an
-id and call `.test_support()` (plus `.aria_label(...)`) to make them
-selectable.
+description, placeholder, value, checked/disabled/focused/expanded/selected
+state, bounds and the GPUI element id. gpui-kit components register
+themselves; give your own elements an id and call `.test_support()` (plus
+`.aria_label(...)`) to make them selectable.
+
+Text is what gpui-kit's text components paint (`Label`, `Kbd`, inline text and
+the components built on them), each a text node under the nearest observed
+element. Wrap your own text with `.test_text("…")`, or an image with
+`.test_alt_text("…")`, both from `gpui_base::TestTextExt`. Plain GPUI text
+(`div().child("x")`) and text inside cached views are not seen yet; that needs
+a hook in GPUI itself.
 
 | Playwright | Support |
 | --- | --- |
 | `getByRole` (name, exact, checked, disabled, expanded, selected, includeHidden, level, pressed) | Yes |
-| `getByLabel`, `getByText`, `getByTestId` (the GPUI element id) | Yes; an element's text is its label until gpui-kit observes rendered text |
-| `getByTitle`, `getByPlaceholder`, `getByAltText` | Match nothing yet: gpui-kit does not observe those attributes |
+| `getByLabel`, `getByText`, `getByTestId` (the GPUI element id) | Yes |
+| `getByPlaceholder` (input placeholders), `getByTitle` (accessible description, such as a button's tooltip), `getByAltText` (an `Avatar`'s name, `.test_alt_text`) | Yes |
 | `locator('#id')`, `[attr=value]`, `filter({ has, hasNot, hasText, hasNotText, visible })`, `and`, `or`, `first`, `last`, `nth`, chaining | Yes |
 | Other CSS and XPath selectors | Error that names the selector |
 | `click`, `dblclick`, `tap`, `hover`, `check`, `uncheck`, `setChecked`, `fill`, `clear`, `press`, `pressSequentially`, `focus` | Yes, with actionability waits and strict mode |
@@ -92,13 +108,43 @@ selectable.
 | `page.screenshot`, `locator.screenshot`, `toHaveScreenshot` (clip, mask, maskColor, threshold, maxDiffPixels) | Yes |
 | `page.setViewportSize`, context `viewport`, `colorScheme`, `page.emulateMedia({ colorScheme })`, `bringToFront`, `close` | Yes |
 | Tracing (`trace: 'on'`), `route`, cookies, storage state | Accepted as no-ops; traces are empty |
-| `reload`, `goBack`, `setContent`, `evaluate`, `waitForFunction`, network, downloads, frames | Clear "not supported by GPUI apps" errors |
+| `page.evaluate`, `evaluateHandle`, `locator.evaluate`, `evaluateAll`, `$eval`, `$$eval`, `waitForFunction`, `JSHandle.jsonValue` | With the `evaluate` feature (below) |
+| `reload`, `goBack`, `setContent`, network, downloads, frames | Clear "not supported by GPUI apps" errors |
 
 The server speaks Playwright **1.58 through 1.64** (`@playwright/test`,
 `playwright` for Python, or the matching Java/.NET release) and answers each
 client in its own version's protocol. CI runs the suite against every one.
 Other versions are refused at connect with Playwright's own version-mismatch
 message.
+
+## Scripts
+
+The optional `evaluate` feature embeds [QuickJS](https://bellard.org/quickjs/)
+so `page.evaluate` and friends work:
+
+```toml
+playwright = ["dep:gpui-playwright", "gpui-playwright/evaluate"]
+```
+
+A script runs on the app's main thread against a read-only snapshot of the
+page, not a browser DOM. It sees `document.title`, `document.body`,
+`document.querySelector(All)` with Playwright selectors, `location.href`,
+`innerWidth`/`innerHeight`, and elements with `textContent`, `innerText`,
+`value`, `checked`, `disabled`, `getAttribute`, `getBoundingClientRect`,
+`querySelector(All)` and `matches`. Arguments and results use Playwright's own
+encoding, so dates, regexes, `NaN`, `BigInt`, cycles and handles round-trip.
+Each run is capped at 10 s and 256 MB.
+
+To reach app state, expose a function; scripts call it synchronously:
+
+```rust
+server.expose_function("todos", |_args, cx| Ok(serde_json::json!(todo_titles(cx))))
+```
+
+```js
+expect(await page.evaluate(() => todos())).toEqual(['Buy milk']);
+await page.waitForFunction(() => todos().length === 2);
+```
 
 ## Pages and contexts
 

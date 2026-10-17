@@ -2,7 +2,7 @@
 //! elements gpui-base observed in the window's last completed frame.
 
 use gpui::{ElementId, Role, Window};
-use gpui_kit::base::test_support::{self, ElementSnapshot};
+use gpui_kit::base::test_support::{self, ElementSnapshot, TextSnapshot};
 use gpui_playwright_selectors::{Checked, Node, Rect, Tree};
 use std::collections::HashMap;
 
@@ -16,31 +16,41 @@ pub(crate) struct Snapshot {
 
 impl Snapshot {
     pub fn capture(window: &Window) -> Self {
-        let snapshots = test_support::snapshots(window);
-        Self::build(snapshots, title(window))
+        let items = test_support::snapshots(window)
+            .into_iter()
+            .map(Item::Element)
+            .chain(
+                test_support::texts(window)
+                    .into_iter()
+                    .enumerate()
+                    .map(|(i, text)| Item::Text(i, text)),
+            )
+            .collect();
+        Self::build(items, title(window))
     }
 
     pub fn index_of(&self, path: &[ElementId]) -> Option<usize> {
         self.paths.iter().position(|p| p.as_slice() == path)
     }
 
-    fn build(snapshots: Vec<ElementSnapshot>, title: String) -> Self {
+    fn build(items: Vec<Item>, title: String) -> Self {
+        let item_paths: Vec<Vec<ElementId>> = items.iter().map(Item::path).collect();
         // Parent = the nearest observed element whose path is a prefix.
-        let by_path: HashMap<Vec<ElementId>, usize> = snapshots
+        let by_path: HashMap<&[ElementId], usize> = items
             .iter()
             .enumerate()
-            .map(|(i, s)| (s.path().to_vec(), i))
+            .filter(|(_, item)| matches!(item, Item::Element(_)))
+            .map(|(i, _)| (item_paths[i].as_slice(), i))
             .collect();
-        let parent_of: Vec<Option<usize>> = snapshots
+        let parent_of: Vec<Option<usize>> = item_paths
             .iter()
-            .map(|s| {
-                let path = s.path();
+            .map(|path| {
                 (1..path.len())
                     .rev()
                     .find_map(|len| by_path.get(&path[..len]).copied())
             })
             .collect();
-        let mut children: Vec<Vec<usize>> = vec![Vec::new(); snapshots.len()];
+        let mut children: Vec<Vec<usize>> = vec![Vec::new(); items.len()];
         let mut roots = Vec::new();
         for (i, parent) in parent_of.iter().enumerate() {
             match parent {
@@ -48,9 +58,15 @@ impl Snapshot {
                 None => roots.push(i),
             }
         }
+        // An element that contains painted text shows that text rather than
+        // its label.
+        let shows_text: Vec<bool> = children
+            .iter()
+            .map(|list| list.iter().any(|&c| matches!(items[c], Item::Text(..))))
+            .collect();
         // Document order: siblings top to bottom, then left to right.
         let order_key = |i: &usize| {
-            let b = snapshots[*i].bounds();
+            let b = items[*i].bounds();
             (
                 (f32::from(b.origin.y) * 100.) as i64,
                 (f32::from(b.origin.x) * 100.) as i64,
@@ -62,15 +78,50 @@ impl Snapshot {
         }
 
         let mut tree = Tree::new();
-        let mut paths = Vec::with_capacity(snapshots.len());
+        let mut paths = Vec::with_capacity(items.len());
         let mut stack: Vec<(usize, Option<usize>)> =
             roots.iter().rev().map(|&r| (r, None)).collect();
         while let Some((i, parent)) = stack.pop() {
-            let index = tree.push(parent, node(&snapshots[i]));
-            paths.push(snapshots[i].path().to_vec());
+            let node = match &items[i] {
+                Item::Element(snapshot) => element_node(snapshot, shows_text[i]),
+                Item::Text(_, text) => text_node(text),
+            };
+            let index = tree.push(parent, node);
+            paths.push(item_paths[i].clone());
             stack.extend(children[i].iter().rev().map(|&c| (c, Some(index))));
         }
         Self { tree, paths, title }
+    }
+}
+
+/// What gpui-kit observed in a frame: identified elements, and the text that
+/// text components painted inside them.
+enum Item {
+    Element(ElementSnapshot),
+    Text(usize, TextSnapshot),
+}
+
+impl Item {
+    fn path(&self) -> Vec<ElementId> {
+        match self {
+            Item::Element(snapshot) => snapshot.path().to_vec(),
+            // Text has no id of its own; its paint order tells texts apart.
+            Item::Text(i, text) => {
+                let mut path = text.path().to_vec();
+                path.push(ElementId::NamedInteger(
+                    "gpui-playwright-text".into(),
+                    *i as u64,
+                ));
+                path
+            }
+        }
+    }
+
+    fn bounds(&self) -> gpui::Bounds<gpui::Pixels> {
+        match self {
+            Item::Element(snapshot) => snapshot.bounds(),
+            Item::Text(_, text) => text.bounds(),
+        }
     }
 }
 
@@ -83,7 +134,7 @@ fn title(window: &Window) -> String {
     title
 }
 
-fn node(snapshot: &ElementSnapshot) -> Node {
+fn element_node(snapshot: &ElementSnapshot, shows_text: bool) -> Node {
     let bounds = snapshot.bounds();
     let role = snapshot.role().and_then(aria_role);
     let checked = match (snapshot.indeterminate(), snapshot.checked()) {
@@ -95,16 +146,16 @@ fn node(snapshot: &ElementSnapshot) -> Node {
     Node {
         role: role.map(str::to_owned),
         label: snapshot.label().map(str::to_owned),
-        // Rendered text is not observed yet. A label is what controls and
-        // labelled elements display, except for text fields, whose label is
-        // a placeholder or caption rather than their content.
-        text: if role.is_some_and(is_text_field) {
+        // Without painted text inside, a label is what controls and labelled
+        // elements display, except for text fields, whose label is a
+        // placeholder or caption rather than their content.
+        text: if shows_text || role.is_some_and(is_text_field) {
             String::new()
         } else {
             snapshot.label().unwrap_or_default().to_owned()
         },
         value: snapshot.value().map(str::to_owned),
-        description: None,
+        description: snapshot.description().map(str::to_owned),
         test_id: snapshot.path().last().map(|id| id.to_string()),
         checked,
         disabled: snapshot.disabled().unwrap_or(false),
@@ -122,7 +173,40 @@ fn node(snapshot: &ElementSnapshot) -> Node {
             width: f32::from(bounds.size.width) as f64,
             height: f32::from(bounds.size.height) as f64,
         },
-        attributes: Default::default(),
+        // `getByPlaceholder` and `getByTitle` match these. A tooltip is the
+        // description gpui-kit gives a control, as `title` is on the web.
+        attributes: [
+            ("placeholder", snapshot.placeholder()),
+            ("title", snapshot.description()),
+        ]
+        .into_iter()
+        .filter_map(|(name, value)| Some((name.to_owned(), value?.to_owned())))
+        .collect(),
+    }
+}
+
+fn text_node(text: &TextSnapshot) -> Node {
+    let bounds = text.bounds();
+    let alt = text.is_alternative().then(|| text.text().to_owned());
+    Node {
+        // Alternative text stands in for an image, as `<img alt>` does.
+        role: alt.as_ref().map(|_| "img".to_owned()),
+        label: alt.clone(),
+        text: if alt.is_some() {
+            String::new()
+        } else {
+            text.text().to_owned()
+        },
+        visible: text.visible() || has_box(bounds),
+        in_viewport: text.visible(),
+        bounds: Rect {
+            x: f32::from(bounds.origin.x) as f64,
+            y: f32::from(bounds.origin.y) as f64,
+            width: f32::from(bounds.size.width) as f64,
+            height: f32::from(bounds.size.height) as f64,
+        },
+        attributes: alt.into_iter().map(|alt| ("alt".to_owned(), alt)).collect(),
+        ..Node::default()
     }
 }
 
