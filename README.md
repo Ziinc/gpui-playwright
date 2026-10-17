@@ -165,6 +165,36 @@ headless: the server renders frames itself, so locators, actions and `expect`
 work, but screenshots need a visible window. On Linux CI, run screenshot tests
 under Xvfb with a software Vulkan driver (see `.github/workflows/ci.yml`).
 
+## Tauri apps
+
+Apps that render GPUI into Tauri windows with
+[tauri-plugin-gpui](https://github.com/ziinc/tauri-gpui) work the same way:
+start the server from `GpuiConfig::on_launch`, and give each window gpui-kit's
+`Root` so painted text is observed.
+
+```rust
+tauri_plugin_gpui::init_with(
+    app,
+    GpuiConfig::new().on_launch(|cx| {
+        gpui_kit::init(cx);
+        if let Some(server) = gpui_playwright::Server::from_env() {
+            server.start(cx).expect("start gpui-playwright");
+        }
+    }),
+)?;
+let window = tauri::WindowBuilder::new(app, "main").build()?;
+window.attach_gpui_view(GpuiOptions::default(), |window, cx| {
+    let view = cx.new(|cx| MyView::new(window, cx));
+    cx.new(|cx| gpui_kit::base::Root::new(view, window, cx))
+})?;
+```
+
+`examples/tauri` hosts the to-do example this way, and CI runs the whole e2e
+suite and a chaos pass against it (`GPUI_PLAYWRIGHT_APP=tauri npx playwright
+test`). Tauri windows are opened by Tauri, so `on_new_page` is not used there:
+`context.newPage()` adopts the existing window. tauri-plugin-gpui must be on
+the same `gpui-pre` snapshot as gpui-kit (`=0.3.9` for 0.7.3).
+
 ## Chaos testing
 
 `e2e/chaos/chaos.js` drives a running app with malformed protocol traffic,
@@ -184,6 +214,7 @@ node e2e/chaos/chaos.js --seed 42 --steps 300
   language (`internal:role=…`, `internal:label=…`, filters, `nth`, `>>`) over a
   plain element tree, with no GPUI dependency.
 - `examples/todo` – a gpui-kit to-do app with the server enabled.
+- `examples/tauri` – the same app in a Tauri window via tauri-plugin-gpui.
 - `e2e` – a stock `@playwright/test` suite for the example.
 - `examples/python` – the same app driven from `playwright-python`.
 
