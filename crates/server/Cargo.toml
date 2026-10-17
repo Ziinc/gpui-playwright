@@ -1,0 +1,25 @@
+[package]
+name = "gpui-playwright"
+description = "A Playwright protocol server inside GPUI apps: drive them with stock Playwright clients."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+gpui.workspace = true
+# `test-support` turns on gpui-base's element observation, and gpui-component's
+# matching support when the app enables components.
+gpui-kit = { workspace = true, default-features = false, features = ["test-support"] }
+gpui-playwright-selectors.workspace = true
+serde_json.workspace = true
+regex.workspace = true
+async-channel = "2"
+base64 = "0.22"
+image = { version = "0.25", default-features = false, features = ["png"] }
+log = "0.4"
+tungstenite = "0.26"
+
+[target.'cfg(any(target_os = "linux", target_os = "freebsd"))'.dependencies]
+raw-window-handle = "0.6"
+x11rb = { version = "0.13", default-features = false }

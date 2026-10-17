@@ -1,0 +1,15 @@
+[package]
+name = "todo"
+description = "A gpui-kit to-do app driven by stock Playwright through gpui-playwright."
+publish = false
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[features]
+default = ["playwright"]
+playwright = ["dep:gpui-playwright"]
+
+[dependencies]
+gpui-kit = { workspace = true, features = ["component", "assets"] }
+gpui-playwright = { workspace = true, optional = true }
