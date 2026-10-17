@@ -175,6 +175,9 @@ impl Render for TodoView {
             .child(
                 div()
                     .id("todo-list")
+                    .flex_1()
+                    .min_h_0()
+                    .overflow_y_scroll()
                     .flex()
                     .flex_col()
                     .children(todos.into_iter().map(|todo| {

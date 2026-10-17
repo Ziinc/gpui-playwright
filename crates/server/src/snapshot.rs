@@ -114,7 +114,8 @@ fn node(snapshot: &ElementSnapshot) -> Node {
         level: None,
         readonly: false,
         focused: snapshot.focused().unwrap_or(false),
-        visible: snapshot.visible(),
+        visible: snapshot.visible() || has_box(bounds),
+        in_viewport: snapshot.visible(),
         bounds: Rect {
             x: f32::from(bounds.origin.x) as f64,
             y: f32::from(bounds.origin.y) as f64,
@@ -123,6 +124,15 @@ fn node(snapshot: &ElementSnapshot) -> Node {
         },
         attributes: Default::default(),
     }
+}
+
+/// gpui-kit reports an element as visible only when it shows on screen, so
+/// one scrolled out of a container or the window reads as hidden. Playwright
+/// counts any non-empty box as visible. gpui-kit does not say whether an
+/// unseen element was clipped or styled invisible, and clipping is by far the
+/// common case in GPUI, so a non-empty box counts as visible.
+fn has_box(bounds: gpui::Bounds<gpui::Pixels>) -> bool {
+    bounds.size.width > gpui::px(0.) && bounds.size.height > gpui::px(0.)
 }
 
 fn is_text_field(role: &str) -> bool {

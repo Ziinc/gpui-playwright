@@ -84,7 +84,11 @@ struct State {
 #[derive(Clone)]
 pub(crate) struct Session {
     state: Rc<RefCell<State>>,
+    /// The client's Playwright minor version; 0 when it sent none.
+    minor: u32,
     hooks: Rc<Hooks>,
+    /// Windows that pages of any connection hold, so two clients never share one.
+    claimed: Rc<RefCell<Vec<AnyWindowHandle>>>,
 }
 
 /// What a selector-based call acts on.
@@ -122,6 +126,20 @@ impl Target {
 
     fn strict(&self) -> bool {
         matches!(self, Target::Selector { strict: true, .. })
+    }
+
+    /// The same target with strict mode on, as `expect` always resolves.
+    fn into_strict(self) -> Self {
+        match self {
+            Target::Selector {
+                selector, scope, ..
+            } => Target::Selector {
+                selector,
+                strict: true,
+                scope,
+            },
+            handle => handle,
+        }
     }
 
     /// The single element a strict call acts on, or a strict-mode violation.
@@ -184,7 +202,12 @@ impl Checks {
 }
 
 impl Session {
-    pub fn new(outgoing: mpsc::Sender<String>, hooks: Rc<Hooks>) -> Self {
+    pub fn new(
+        outgoing: mpsc::Sender<String>,
+        minor: u32,
+        hooks: Rc<Hooks>,
+        claimed: Rc<RefCell<Vec<AnyWindowHandle>>>,
+    ) -> Self {
         Self {
             state: Rc::new(RefCell::new(State {
                 outgoing,
@@ -192,7 +215,9 @@ impl Session {
                 next: 0,
                 closed: false,
             })),
+            minor,
             hooks,
+            claimed,
         }
     }
 
@@ -251,19 +276,25 @@ impl Session {
 
     /// The connection went away: close windows the session opened.
     pub fn shutdown(&self, cx: &mut App) {
-        let windows: Vec<AnyWindowHandle> = {
+        let pages: Vec<(AnyWindowHandle, bool)> = {
             let mut state = self.state.borrow_mut();
             state.closed = true;
             state
                 .objects
                 .values()
                 .filter_map(|object| match object {
-                    Object::Page(page) if page.owned => Some(page.window),
+                    Object::Page(page) => Some((page.window, page.owned)),
                     _ => None,
                 })
                 .collect()
         };
-        for window in windows {
+        self.claimed
+            .borrow_mut()
+            .retain(|window| !pages.iter().any(|(page, _)| page == window));
+        let owned = pages
+            .into_iter()
+            .filter_map(|(window, owned)| owned.then_some(window));
+        for window in owned {
             let _ = window.update(cx, |_, window, _| window.remove_window());
         }
     }
@@ -294,6 +325,10 @@ impl Session {
                 return;
             };
             let (context, frame) = (closed.context.clone(), closed.frame.clone());
+            let window = closed.window;
+            self.claimed
+                .borrow_mut()
+                .retain(|claimed| *claimed != window);
             if let Some(Object::Context(context)) = state.objects.get_mut(&context) {
                 context.pages.retain(|p| p != page);
             }
@@ -308,6 +343,11 @@ impl Session {
 
     async fn dispatch(&self, call: &Call, cx: &mut AsyncApp) -> Result<Value, PwError> {
         if call.method == "initialize" && call.guid.is_empty() {
+            if self.state.borrow().objects.contains_key("Playwright") {
+                return Err(PwError::new(
+                    "Playwright is already initialized on this connection",
+                ));
+            }
             return Ok(self.initialize());
         }
         let object = {
@@ -402,9 +442,13 @@ impl Session {
             self.apply_color_scheme(scheme, cx);
         }
         let browser = call.guid.clone();
-        let debugger = self.guid("debugger");
-        self.create(&browser, "Debugger", &debugger, json!({}), Object::Inert);
-        self.send(event(&debugger, "pausedStateChanged", json!({})));
+        // Contexts gained a `Debugger` in 1.59.
+        let debugger = (self.minor == 0 || self.minor >= 59).then(|| {
+            let debugger = self.guid("debugger");
+            self.create(&browser, "Debugger", &debugger, json!({}), Object::Inert);
+            self.send(event(&debugger, "pausedStateChanged", json!({})));
+            debugger
+        });
         let request_tracing = self.guid("tracing");
         self.create(
             &browser,
@@ -438,7 +482,9 @@ impl Session {
             "BrowserContext",
             &context,
             json!({
-                "debugger": {"guid": debugger},
+                "debugger": debugger.map(|guid| json!({"guid": guid})),
+                // Required before 1.59; later clients ignore it.
+                "isChromium": false,
                 "requestContext": {"guid": request},
                 "tracing": {"guid": tracing},
                 "options": options,
@@ -510,16 +556,7 @@ impl Session {
                 (window, true)
             }
             None => {
-                let bound: Vec<AnyWindowHandle> = self
-                    .state
-                    .borrow()
-                    .objects
-                    .values()
-                    .filter_map(|object| match object {
-                        Object::Page(page) => Some(page.window),
-                        _ => None,
-                    })
-                    .collect();
+                let bound = self.claimed.borrow().clone();
                 let window = cx
                     .update(|cx| cx.windows())
                     .into_iter()
@@ -533,6 +570,8 @@ impl Session {
                 (window, false)
             }
         };
+        // Claim before the first await, so concurrent `newPage` calls pick different windows.
+        self.claimed.borrow_mut().push(window);
 
         let viewport = match self.state.borrow().objects.get(context) {
             Some(Object::Context(context)) => context.viewport,
@@ -735,6 +774,12 @@ impl Session {
                     return Ok(Step::Wait(log));
                 }
             }
+            if !node.in_viewport {
+                scroll_toward(window, &snapshot, index, cx);
+                log.push("    - scrolling into view if needed".into());
+                previous.set(None);
+                return Ok(Step::Wait(log));
+            }
             Ok(Step::Done(node.bounds))
         })
         .await
@@ -925,7 +970,10 @@ impl Session {
                     .map_err(|_| PwError::closed())?;
                 Ok(json!({"value": title}))
             }
-            "expect" => self.expect(call, window, cx).await,
+            "expect" => {
+                let result = self.expect(call, window, cx).await;
+                self.expect_result(call.bool("isNot"), result)
+            }
             // `page.ariaSnapshot()` sends no selector: snapshot the whole window.
             "ariaSnapshot" if call.str("selector").is_none() && !self.is_handle(&call.guid) => {
                 let snapshot = capture(window, cx)?;
@@ -1144,7 +1192,8 @@ impl Session {
         // Page-level matchers such as `toHaveTitle` send no selector.
         let target = match call.str("selector") {
             None if !self.is_handle(&call.guid) => None,
-            _ => Some(self.target(call)?),
+            // Matchers are strict whether or not the call says so.
+            _ => Some(self.target(call)?.into_strict()),
         };
         let expression = call.str("expression").unwrap_or_default().to_owned();
         let is_not = call.bool("isNot");
@@ -1225,6 +1274,77 @@ impl Session {
                 error.name = "ExpectError";
                 Err(error)
             }
+        }
+    }
+
+    /// Clients before 1.61 read an `expect` failure from the result, not an error.
+    fn expect_result(
+        &self,
+        is_not: bool,
+        result: Result<Value, PwError>,
+    ) -> Result<Value, PwError> {
+        if self.minor == 0 || self.minor >= 61 {
+            // These clients read every `expect` error's details, so an error
+            // without them crashes the matcher instead of failing it.
+            return result.map_err(|err| match err.details {
+                Some(_) => err,
+                None => {
+                    let message = err.message.trim_start_matches("Error: ").to_owned();
+                    err.with_details(json!({"customErrorMessage": message}))
+                }
+            });
+        }
+        let err = match result {
+            Ok(_) => return Ok(json!({"matches": !is_not})),
+            Err(err) if err.name == "ExpectError" => err,
+            // Like Playwright's own server, report strict mode violations as
+            // the matcher's message and throw everything else.
+            Err(err) if err.message.contains("strict mode violation") => {
+                return Ok(json!({"matches": is_not, "errorMessage": err.message, "log": err.log}));
+            }
+            Err(err) => return Err(err),
+        };
+        let mut result = json!({"matches": is_not, "timedOut": true, "log": err.log});
+        if let Some(received) = err.details.as_ref().map(|details| &details["received"])
+            && received.is_object()
+        {
+            // 1.60 wraps the value with the aria snapshot; older clients take it bare.
+            result["received"] = if self.minor >= 60 {
+                received.clone()
+            } else {
+                received["value"].clone()
+            };
+            if result["received"].is_null() {
+                result
+                    .as_object_mut()
+                    .map(|result| result.remove("received"));
+            }
+        }
+        Ok(result)
+    }
+
+    /// Clients before 1.61 read a screenshot mismatch from the result, not an error.
+    fn expect_screenshot_result(&self, result: Result<Value, PwError>) -> Result<Value, PwError> {
+        if self.minor == 0 || self.minor >= 61 {
+            return result;
+        }
+        match result {
+            Err(err) if err.name == "TargetClosedError" => Err(err),
+            Err(err) => {
+                let mut details = err.details.unwrap_or_default();
+                let message = details["customErrorMessage"]
+                    .as_str()
+                    .unwrap_or(&err.message)
+                    .to_owned();
+                let mut result = json!({"errorMessage": message, "log": err.log});
+                for key in ["actual", "previous", "diff", "timedOut"] {
+                    if let Some(value) = details.get_mut(key).map(Value::take) {
+                        result[key] = value;
+                    }
+                }
+                Ok(result)
+            }
+            ok => ok,
         }
     }
 
@@ -1499,16 +1619,19 @@ impl Session {
             }
             // The client reads a failure only from error details; a bare
             // error would make `toHaveScreenshot` pass.
-            "expectScreenshot" => self
-                .expect_screenshot(call, window, cx)
-                .await
-                .map_err(|err| match err.details {
-                    Some(_) => err,
-                    None => {
-                        let message = err.message.clone();
-                        err.with_details(json!({"customErrorMessage": message}))
-                    }
-                }),
+            "expectScreenshot" => {
+                let result =
+                    self.expect_screenshot(call, window, cx)
+                        .await
+                        .map_err(|err| match err.details {
+                            Some(_) => err,
+                            None => {
+                                let message = err.message.clone();
+                                err.with_details(json!({"customErrorMessage": message}))
+                            }
+                        });
+                self.expect_screenshot_result(result)
+            }
             "setViewportSize" => {
                 let viewport = &call.params["viewportSize"];
                 let width = viewport["width"].as_f64().unwrap_or(1280.);
@@ -1729,6 +1852,44 @@ async fn settle(window: AnyWindowHandle, cx: &mut AsyncApp) {
                 .timer(Duration::from_millis(8))
                 .await;
         }
+    }
+}
+
+/// Scrolls the nearest on-screen ancestor of `index` toward it, as
+/// `scrollIntoViewIfNeeded` does, with a wheel event over that ancestor.
+fn scroll_toward(window: AnyWindowHandle, snapshot: &Snapshot, index: usize, cx: &mut AsyncApp) {
+    let tree = &snapshot.tree;
+    let mut ancestor = tree.parent(index);
+    while let Some(parent) = ancestor {
+        if tree.node(parent).in_viewport {
+            break;
+        }
+        ancestor = tree.parent(parent);
+    }
+    let target = tree.node(index).bounds;
+    let _ = window.update(cx, |_, window, cx| {
+        let viewport = window.viewport_size();
+        let screen = Rect {
+            x: 0.,
+            y: 0.,
+            width: f32::from(viewport.width) as f64,
+            height: f32::from(viewport.height) as f64,
+        };
+        let over = ancestor.map_or(screen, |a| intersect(&tree.node(a).bounds, &screen));
+        let (ox, oy) = over.center();
+        let (tx, ty) = target.center();
+        input::wheel(window, input::pos(ox, oy), tx - ox, ty - oy, cx);
+    });
+}
+
+fn intersect(a: &Rect, b: &Rect) -> Rect {
+    let x = a.x.max(b.x);
+    let y = a.y.max(b.y);
+    Rect {
+        x,
+        y,
+        width: ((a.x + a.width).min(b.x + b.width) - x).max(0.),
+        height: ((a.y + a.height).min(b.y + b.height) - y).max(0.),
     }
 }
 

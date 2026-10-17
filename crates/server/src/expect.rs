@@ -212,7 +212,7 @@ pub(crate) fn evaluate(
                 received: None,
             },
         },
-        "to.be.in.viewport" => state("visible", first.is_some_and(|e| tree.node(e).visible)),
+        "to.be.in.viewport" => flag(first.is_some_and(|e| tree.node(e).in_viewport)),
         "to.be.checked" => match first.and_then(|e| checked_state(tree, e)) {
             Some(actual) => {
                 let options = serialized::decode(&params["expectedValue"]["value"]);

@@ -47,7 +47,11 @@ pub struct Node {
     pub level: Option<u32>,
     pub readonly: bool,
     pub focused: bool,
+    /// Rendered with a non-empty box, as Playwright's `visible`. An element
+    /// scrolled or laid out outside the window is still visible.
     pub visible: bool,
+    /// At least partly inside the window's viewport.
+    pub in_viewport: bool,
     pub bounds: Rect,
     /// Extra attributes for `internal:attr`, such as `placeholder` or `title`.
     pub attributes: BTreeMap<String, String>,

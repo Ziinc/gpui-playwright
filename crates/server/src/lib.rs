@@ -166,6 +166,7 @@ impl Server {
 
         let hooks = Rc::new(self.hooks);
         let sessions: Rc<std::cell::RefCell<HashMap<u64, Session>>> = Default::default();
+        let claimed: Rc<std::cell::RefCell<Vec<AnyWindowHandle>>> = Default::default();
         cx.spawn({
             let sessions = sessions.clone();
             async move |cx| {
@@ -174,10 +175,12 @@ impl Server {
                         Event::Opened {
                             connection,
                             outgoing,
+                            minor,
                         } => {
-                            sessions
-                                .borrow_mut()
-                                .insert(connection, Session::new(outgoing, hooks.clone()));
+                            sessions.borrow_mut().insert(
+                                connection,
+                                Session::new(outgoing, minor, hooks.clone(), claimed.clone()),
+                            );
                         }
                         Event::Message { connection, text } => {
                             let session = sessions.borrow().get(&connection).cloned();
