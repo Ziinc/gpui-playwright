@@ -273,6 +273,17 @@ fn main() {
                             cx.notify();
                         });
                     })
+                    // A deep link, so tests can `page.goto('todo://clear-completed')`.
+                    .on_navigate(|url, _, cx| match url {
+                        "todo://clear-completed" => {
+                            self::store(cx).update(cx, |store, cx| {
+                                store.todos.retain(|todo| !todo.done);
+                                cx.notify();
+                            });
+                            Ok(())
+                        }
+                        _ => Err(format!("no route for {url}")),
+                    })
                     .on_color_scheme(|scheme, cx| {
                         let mode = match scheme {
                             gpui_playwright::ColorScheme::Dark => ThemeMode::Dark,

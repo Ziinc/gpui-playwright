@@ -89,3 +89,10 @@ test('keyboard shortcuts and mouse', async ({ page }) => {
   await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
   await expect(page.getByText('0 of 2 left')).toBeVisible();
 });
+
+test('goto runs the app route', async ({ page }) => {
+  await page.goto('todo://clear-completed');
+  await expect(page).toHaveURL('todo://clear-completed');
+  await expect(page.getByRole('checkbox')).toHaveText(['Write a Playwright test']);
+  await expect(page.goto('todo://nowhere')).rejects.toThrow('no route for todo://nowhere');
+});

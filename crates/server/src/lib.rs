@@ -150,6 +150,17 @@ impl Server {
         self
     }
 
+    /// Handles `page.goto(url)`, for apps with their own routes or deep
+    /// links. The window is the page's; an `Err` fails the `goto` with its
+    /// message. Without it, `goto` is unsupported.
+    pub fn on_navigate(
+        mut self,
+        navigate: impl Fn(&str, AnyWindowHandle, &mut App) -> Result<(), String> + 'static,
+    ) -> Self {
+        self.hooks.navigate = Some(Rc::new(navigate));
+        self
+    }
+
     /// Starts listening and returns the WebSocket endpoint clients connect to.
     /// The endpoint is also printed to stdout for test runners to read.
     pub fn start(self, cx: &mut App) -> io::Result<String> {

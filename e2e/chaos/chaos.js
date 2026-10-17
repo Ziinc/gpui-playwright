@@ -56,6 +56,7 @@ const EXPECTED_ERRORS = [
   /did not change its state/,
   /Taking a screenshot failed/,
   /Node is not an <input>/,
+  /no route for/,
 ];
 
 async function alive() {
@@ -183,7 +184,10 @@ async function randomAction(page) {
     async () => locator().boundingBox({ timeout }),
     async () => locator().ariaSnapshot({ timeout }),
     async () => locator().allTextContents(),
-    async () => page.keyboard.type(pick(TEXTS)),
+    // A key per character costs the app a full input update each; long texts
+    // go through fill and insertText instead.
+    async () => page.keyboard.type(pick(TEXTS).slice(0, 200)),
+    async () => page.keyboard.insertText(pick(TEXTS)),
     async () => page.keyboard.press(pick(KEYS)),
     async () => page.keyboard.down(pick(['Shift', 'Control', 'Alt'])),
     async () => page.keyboard.up(pick(['Shift', 'Control', 'Alt'])),

@@ -139,6 +139,22 @@ pub(crate) fn type_text(window: &mut Window, text: &str, cx: &mut App) {
     }
 }
 
+/// Inserts `text` in one input event, like a paste or an IME commit, without
+/// a key event per character.
+pub(crate) fn insert_text(window: &mut Window, text: &str, cx: &mut App) {
+    let Some(first) = text.chars().next() else {
+        return;
+    };
+    window.dispatch_keystroke(
+        Keystroke {
+            modifiers: Modifiers::default(),
+            key: first.to_string(),
+            key_char: Some(text.to_owned()),
+        },
+        cx,
+    );
+}
+
 pub(crate) fn set_modifiers(window: &mut Window, modifiers: Modifiers, cx: &mut App) {
     window.dispatch_event(
         ModifiersChangedEvent {

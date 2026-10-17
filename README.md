@@ -50,6 +50,8 @@ gpui_kit::application().run(|cx| {
             .on_new_page(|cx| open_main_window(cx))
             // Optional: honour `colorScheme` and `page.emulateMedia()`.
             .on_color_scheme(|scheme, cx| apply_theme(scheme, cx))
+            // Optional: route `page.goto(url)`, such as a deep link.
+            .on_navigate(|url, window, cx| open_route(url, window, cx))
             .start(cx)
             .expect("start gpui-playwright");
     }
@@ -86,10 +88,11 @@ selectable.
 | `textContent`, `innerText`, `inputValue`, `getAttribute`, `boundingBox`, `isVisible`/`isEnabled`/`isChecked`/..., `count`, `all`, `allInnerTexts`, `allTextContents`, `ariaSnapshot` | Yes |
 | `expect(locator)`: `toBeVisible`, `toBeHidden`, `toBeEnabled`, `toBeDisabled`, `toBeEditable`, `toBeFocused`, `toBeChecked`, `toBeEmpty`, `toBeAttached`, `toBeInViewport`, `toHaveText`, `toContainText`, `toHaveValue`, `toHaveCount`, `toHaveAccessibleName`, `toHaveAccessibleDescription`, `toHaveRole`, `toHaveId`, `toHaveAttribute` | Yes |
 | `expect(page).toHaveTitle` | Yes (the window title) |
+| `page.goto`, `page.url()`, `expect(page).toHaveURL` | With `on_navigate`: the app routes the URL |
 | `page.screenshot`, `locator.screenshot`, `toHaveScreenshot` (clip, mask, maskColor, threshold, maxDiffPixels) | Yes |
 | `page.setViewportSize`, context `viewport`, `colorScheme`, `page.emulateMedia({ colorScheme })`, `bringToFront`, `close` | Yes |
 | Tracing (`trace: 'on'`), `route`, cookies, storage state | Accepted as no-ops; traces are empty |
-| `goto`, `setContent`, `evaluate`, `waitForFunction`, network, downloads, frames | Clear "not supported by GPUI apps" errors |
+| `reload`, `goBack`, `setContent`, `evaluate`, `waitForFunction`, network, downloads, frames | Clear "not supported by GPUI apps" errors |
 
 The server speaks Playwright **1.58 through 1.64** (`@playwright/test`,
 `playwright` for Python, or the matching Java/.NET release) and answers each

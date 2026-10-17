@@ -115,6 +115,7 @@ pub(crate) fn evaluate(
     tree: &Tree,
     elements: &[usize],
     title: &str,
+    url: &str,
 ) -> Result<Outcome, PwError> {
     let expected_text: Vec<Expected> = params["expectedText"]
         .as_array()
@@ -268,6 +269,7 @@ pub(crate) fn evaluate(
             text_outcome(first.map(|e| tree.node(e).test_id.clone().unwrap_or_default()))
         }
         "to.have.title" => text_outcome(Some(title.to_owned())),
+        "to.have.url" => text_outcome(Some(url.to_owned())),
         "to.have.attribute.value" | "to.have.attribute" => {
             let name = params["expressionArg"].as_str().unwrap_or_default();
             let value = first.and_then(|e| {
@@ -315,5 +317,6 @@ pub(crate) fn allows_missing(expression: &str) -> bool {
             | "to.have.count"
             | "to.have.text.array"
             | "to.have.title"
+            | "to.have.url"
     )
 }

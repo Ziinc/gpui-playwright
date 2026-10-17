@@ -31,6 +31,7 @@ const POLL: Duration = Duration::from_millis(16);
 type ResetHook = Rc<dyn Fn(&mut App)>;
 type OpenPageHook = Rc<dyn Fn(&mut App) -> Option<AnyWindowHandle>>;
 type ColorSchemeHook = Rc<dyn Fn(ColorScheme, &mut App)>;
+type NavigateHook = Rc<dyn Fn(&str, AnyWindowHandle, &mut App) -> Result<(), String>>;
 
 /// Application callbacks the server runs on Playwright's behalf.
 #[derive(Default)]
@@ -38,6 +39,7 @@ pub(crate) struct Hooks {
     pub new_context: Option<ResetHook>,
     pub new_page: Option<OpenPageHook>,
     pub color_scheme: Option<ColorSchemeHook>,
+    pub navigate: Option<NavigateHook>,
 }
 
 enum Object {
@@ -71,6 +73,8 @@ struct PageState {
     mouse: Point<Pixels>,
     button: Option<MouseButton>,
     modifiers: Modifiers,
+    /// The last `goto` URL, which `page.url()` and `toHaveURL` report.
+    url: String,
 }
 
 struct State {
@@ -618,6 +622,7 @@ impl Session {
                 mouse: Point::default(),
                 button: None,
                 modifiers: Modifiers::default(),
+                url: "about:blank".into(),
             }),
         );
         if let Some(Object::Context(state)) = self.state.borrow_mut().objects.get_mut(context) {
@@ -839,7 +844,7 @@ impl Session {
                     if value.is_empty() {
                         input::press(window, input::keystroke("Backspace").expect("key"), cx);
                     } else {
-                        input::type_text(window, &value, cx);
+                        input::insert_text(window, &value, cx);
                     }
                     if modifiers != Modifiers::default() {
                         input::set_modifiers(window, modifiers, cx);
@@ -862,8 +867,7 @@ impl Session {
                     let key = input::keystroke(call.str("key").unwrap_or_default())?;
                     let _ = window.update(cx, |_, window, cx| input::press(window, key, cx));
                 } else {
-                    let text = call.str("text").unwrap_or_default().to_owned();
-                    let _ = window.update(cx, |_, window, cx| input::type_text(window, &text, cx));
+                    type_text(window, call.str("text").unwrap_or_default(), cx).await;
                 }
                 settle(window, cx).await;
                 Ok(Value::Null)
@@ -1008,10 +1012,30 @@ impl Session {
                 Ok(Value::Null)
             }
             "highlight" | "hideHighlight" | "selectText" | "blur" => Ok(Value::Null),
-            "goto" | "reload" | "goBack" | "goForward" | "setContent" | "addScriptTag"
-            | "addStyleTag" => Err(PwError::unsupported(&format!(
-                "page.{method}() (GPUI pages have no URL or HTML content)"
-            ))),
+            "goto" if self.hooks.navigate.is_some() => {
+                let url = call.str("url").unwrap_or_default().to_owned();
+                let navigate = self.hooks.navigate.clone().expect("checked");
+                cx.update(|cx| navigate(&url, window, cx))
+                    .map_err(|message| PwError::new(format!("page.goto: {message}")))?;
+                self.with_page(&page, |state| state.url = url.clone());
+                settle(window, cx).await;
+                // A same-document navigation: the client updates `page.url()`
+                // and resolves `waitForURL` without waiting on a response.
+                self.send(event(
+                    &call.guid,
+                    "navigated",
+                    json!({"url": url, "name": ""}),
+                ));
+                Ok(Value::Null)
+            }
+            "goto" => Err(PwError::unsupported(
+                "page.goto() without Server::on_navigate (GPUI pages have no URL)",
+            )),
+            "reload" | "goBack" | "goForward" | "setContent" | "addScriptTag" | "addStyleTag" => {
+                Err(PwError::unsupported(&format!(
+                    "page.{method}() (GPUI pages have no URL or HTML content)"
+                )))
+            }
             // `allInnerTexts()` and `allTextContents()` are fixed expressions
             // that read text, which needs no JavaScript.
             "evalOnSelectorAll" if text_list_expression(call.str("expression")) => {
@@ -1197,6 +1221,11 @@ impl Session {
         };
         let expression = call.str("expression").unwrap_or_default().to_owned();
         let is_not = call.bool("isNot");
+        let url = self
+            .page_of(&call.guid)
+            .ok()
+            .and_then(|(page, _)| self.with_page(&page, |state| state.url.clone()))
+            .unwrap_or_default();
         let locator = target
             .as_ref()
             .map(Target::describe)
@@ -1218,7 +1247,7 @@ impl Session {
                 // Strict for single-element matchers.
                 let single = !matches!(
                     expression.as_str(),
-                    "to.have.count" | "to.have.text.array" | "to.have.title"
+                    "to.have.count" | "to.have.text.array" | "to.have.title" | "to.have.url"
                 );
                 if single && let Some(target) = &target {
                     target.single(&snapshot)?;
@@ -1229,6 +1258,7 @@ impl Session {
                     &snapshot.tree,
                     &elements,
                     &snapshot.title,
+                    &url,
                 )?;
                 if outcome.matches != is_not {
                     return Ok(Step::Done(()));
@@ -1546,8 +1576,12 @@ impl Session {
                 Ok(Value::Null)
             }
             "keyboardType" | "keyboardInsertText" => {
-                let text = call.str("text").unwrap_or_default().to_owned();
-                let _ = window.update(cx, |_, window, cx| input::type_text(window, &text, cx));
+                let text = call.str("text").unwrap_or_default();
+                if method == "keyboardType" {
+                    type_text(window, text, cx).await;
+                } else {
+                    let _ = window.update(cx, |_, window, cx| input::insert_text(window, text, cx));
+                }
                 settle(window, cx).await;
                 Ok(Value::Null)
             }
@@ -1831,6 +1865,24 @@ fn draw_if_hidden(window: &mut gpui::Window, cx: &mut App) -> bool {
 }
 
 /// Waits for two frames, so the effects of input are rendered and observable.
+/// Types `text` a key per character, yielding between short runs so other
+/// calls and the app keep running while a long text types.
+async fn type_text(window: AnyWindowHandle, text: &str, cx: &mut AsyncApp) {
+    let characters: Vec<char> = text.chars().collect();
+    for run in characters.chunks(16) {
+        let run: String = run.iter().collect();
+        if window
+            .update(cx, |_, window, cx| input::type_text(window, &run, cx))
+            .is_err()
+        {
+            return;
+        }
+        cx.background_executor()
+            .timer(Duration::from_millis(1))
+            .await;
+    }
+}
+
 async fn settle(window: AnyWindowHandle, cx: &mut AsyncApp) {
     for _ in 0..2 {
         let (sender, receiver) = async_channel::bounded::<()>(1);
