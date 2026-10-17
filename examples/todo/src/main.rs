@@ -72,6 +72,8 @@ struct TodoView {
 
 impl TodoView {
     fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
+        // GPUI's headless platform ignores `TitlebarOptions::title`.
+        window.set_window_title("Todos");
         let input = cx.new(|cx| InputState::new(window, cx).placeholder("What needs to be done?"));
         cx.subscribe_in(&input, window, |this, _, event: &InputEvent, window, cx| {
             if let InputEvent::PressEnter { .. } = event {

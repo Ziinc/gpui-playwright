@@ -109,10 +109,10 @@ this release speaks **1.64**. Use `@playwright/test@1.64.x`,
 ## Platforms
 
 Screenshots use GPUI's `render_to_image` where the platform implements it, and
-read the window back from the X server on X11. On Linux CI, run the app under
-Xvfb with a software Vulkan driver (see `.github/workflows/ci.yml`). Without a
-display GPUI starts headless, which does not render frames for Playwright to
-observe.
+read the window back from the X server on X11. Without a display GPUI starts
+headless: the server renders frames itself, so locators, actions and `expect`
+work, but screenshots need a visible window. On Linux CI, run screenshot tests
+under Xvfb with a software Vulkan driver (see `.github/workflows/ci.yml`).
 
 ## Repository
 

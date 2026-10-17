@@ -1497,7 +1497,18 @@ impl Session {
                 let image = self.screenshot(window, &call.params, None, cx)?;
                 Ok(json!({"binary": screenshot::base64(&screenshot::png(&image))}))
             }
-            "expectScreenshot" => self.expect_screenshot(call, window, cx).await,
+            // The client reads a failure only from error details; a bare
+            // error would make `toHaveScreenshot` pass.
+            "expectScreenshot" => self
+                .expect_screenshot(call, window, cx)
+                .await
+                .map_err(|err| match err.details {
+                    Some(_) => err,
+                    None => {
+                        let message = err.message.clone();
+                        err.with_details(json!({"customErrorMessage": message}))
+                    }
+                }),
             "setViewportSize" => {
                 let viewport = &call.params["viewportSize"];
                 let width = viewport["width"].as_f64().unwrap_or(1280.);
@@ -1678,23 +1689,36 @@ fn parse_selector(selector: &str) -> Result<Selector, PwError> {
 
 fn capture(window: AnyWindowHandle, cx: &mut AsyncApp) -> Result<Snapshot, PwError> {
     window
-        .update(cx, |_, window, _| Snapshot::capture(window))
+        .update(cx, |_, window, cx| {
+            draw_if_hidden(window, cx);
+            Snapshot::capture(window)
+        })
         .map_err(|_| PwError::closed())
+}
+
+/// Hidden windows, including every window of a headless app, get no frames
+/// from the platform, so the server renders them itself to observe changes.
+fn draw_if_hidden(window: &mut gpui::Window, cx: &mut App) -> bool {
+    if window.is_visible() {
+        return false;
+    }
+    window.draw(cx).clear(cx);
+    window.simulate_next_frame(cx);
+    true
 }
 
 /// Waits for two frames, so the effects of input are rendered and observable.
 async fn settle(window: AnyWindowHandle, cx: &mut AsyncApp) {
     for _ in 0..2 {
         let (sender, receiver) = async_channel::bounded::<()>(1);
-        let scheduled = window
-            .update(cx, |_, window, _| {
-                window.refresh();
-                window.on_next_frame(move |_, _| {
-                    let _ = sender.try_send(());
-                });
-            })
-            .is_ok();
-        if !scheduled {
+        let scheduled = window.update(cx, |_, window, cx| {
+            window.refresh();
+            window.on_next_frame(move |_, _| {
+                let _ = sender.try_send(());
+            });
+            draw_if_hidden(window, cx);
+        });
+        if scheduled.is_err() {
             return;
         }
         for _ in 0..12 {

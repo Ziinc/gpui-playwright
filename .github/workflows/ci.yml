@@ -44,7 +44,13 @@ jobs:
       - run: cargo build -p todo
       - run: npm ci
         working-directory: e2e
-      - run: xvfb-run -a -s "-screen 0 1920x1080x24" npx playwright test
+      - name: Playwright suite without a display (headless GPUI)
+        run: npx playwright test
+        working-directory: e2e
+        env:
+          CI: "1"
+      - name: Playwright suite on Xvfb (with screenshots)
+        run: xvfb-run -a -s "-screen 0 1920x1080x24" npx playwright test
         working-directory: e2e
         env:
           CI: "1"

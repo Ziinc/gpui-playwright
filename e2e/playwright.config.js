@@ -3,9 +3,13 @@
 const { defineConfig } = require('@playwright/test');
 
 const port = process.env.GPUI_PLAYWRIGHT_PORT ?? '9333';
+// Without a display GPUI runs headless: everything works except screenshots.
+const headless =
+  process.platform === 'linux' && !process.env.DISPLAY && !process.env.WAYLAND_DISPLAY;
 
 module.exports = defineConfig({
   testDir: './tests',
+  grepInvert: headless ? /@screenshot/ : undefined,
   // One app, one window: tests share it and run one at a time.
   workers: 1,
   fullyParallel: false,

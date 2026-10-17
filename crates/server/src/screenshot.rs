@@ -15,7 +15,14 @@ pub(crate) fn capture(window: &Window) -> Result<RgbaImage, PwError> {
     {
         return Ok(image);
     }
-    rendered.map_err(|err| PwError::new(format!("Taking a screenshot failed: {err}")))
+    rendered.map_err(|err| {
+        let hint = if window.is_visible() {
+            ""
+        } else {
+            " (the window is hidden or the app runs headless; screenshots need a visible window on a display)"
+        };
+        PwError::new(format!("Taking a screenshot failed: {err}{hint}"))
+    })
 }
 
 pub(crate) fn crop(image: &RgbaImage, scale: f32, x: f64, y: f64, w: f64, h: f64) -> RgbaImage {

@@ -64,13 +64,13 @@ test('aria snapshot', async ({ page }) => {
   expect(snapshot).toContain('checkbox "Read the docs" [checked]');
 });
 
-test('screenshots', async ({ page }) => {
+test('screenshots', { tag: '@screenshot' }, async ({ page }) => {
   const shot = await page.screenshot();
   expect(shot.length).toBeGreaterThan(1000);
   await expect(page.getByRole('button', { name: 'Add' })).toHaveScreenshot('add-button.png');
 });
 
-test('color scheme follows emulateMedia', async ({ page }) => {
+test('color scheme follows emulateMedia', { tag: '@screenshot' }, async ({ page }) => {
   const add = page.getByRole('button', { name: 'Add' });
   await page.emulateMedia({ colorScheme: 'dark' });
   await expect(page.getByRole('button', { name: 'Light' })).toBeVisible();
