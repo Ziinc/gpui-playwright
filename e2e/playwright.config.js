@@ -3,6 +3,13 @@
 const { defineConfig } = require('@playwright/test');
 
 const port = process.env.GPUI_PLAYWRIGHT_PORT ?? '9333';
+// `GPUI_PLAYWRIGHT_APP=tauri` runs the same suite against the to-do app hosted
+// in a Tauri window (examples/tauri) instead of a plain GPUI window.
+const commands = {
+  gpui: 'cargo run -p todo',
+  tauri: 'cargo run --manifest-path examples/tauri/Cargo.toml',
+};
+const command = commands[process.env.GPUI_PLAYWRIGHT_APP ?? 'gpui'];
 // Without a display GPUI runs headless: everything works except screenshots.
 const headless =
   process.platform === 'linux' && !process.env.DISPLAY && !process.env.WAYLAND_DISPLAY;
@@ -24,7 +31,7 @@ module.exports = defineConfig({
     viewport: { width: 560, height: 480 },
   },
   webServer: {
-    command: 'cargo run -p todo',
+    command,
     cwd: '..',
     url: `http://127.0.0.1:${port}/`,
     env: { GPUI_PLAYWRIGHT: port },
