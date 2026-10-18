@@ -6,6 +6,8 @@ inside your app: `@playwright/test`, `playwright-python`, `playwright-java` and
 `playwright-dotnet` connect to it with `connect()` / `connectOptions` and treat
 each app window as a page. No client SDK, no browser download.
 
+![Playwright adding, checking and deleting to-dos in the example app, then switching it to dark mode](docs/demo.gif)
+
 ```js
 // playwright.config.js
 module.exports = {
@@ -220,6 +222,8 @@ node e2e/chaos/chaos.js --seed 42 --steps 300
 - `examples/tauri` – the same app in a Tauri window via tauri-plugin-gpui.
 - `e2e` – a stock `@playwright/test` suite for the example.
 - `examples/python` – the same app driven from `playwright-python`.
+- `e2e/demo` – films `demo.js` driving the example into `docs/demo.gif`
+  (`e2e/demo/record.sh`).
 
 ```sh
 cargo test --workspace
