@@ -1,0 +1,34 @@
+name: Release
+
+on:
+  release:
+    types: [published]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install GPUI build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev \
+            libvulkan-dev libfontconfig-dev libfreetype-dev libasound2-dev libssl-dev
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Check the tag matches the workspace version
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          version=$(cargo metadata --no-deps --format-version 1 \
+            | jq -r '.packages[] | select(.name == "gpui-playwright") | .version')
+          if [ "${TAG#v}" != "$version" ]; then
+            echo "::error::Release tag $TAG does not match workspace version $version"
+            exit 1
+          fi
+      # Publishes the selectors first, then the server that depends on them.
+      - run: cargo publish -p gpui-playwright-selectors -p gpui-playwright
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_RELEASE_TOKEN }}

@@ -225,3 +225,10 @@ node e2e/chaos/chaos.js --seed 42 --steps 300
 cargo test --workspace
 cd e2e && npm ci && xvfb-run -a npx playwright test
 ```
+
+## Releasing
+
+Bump `version` in the workspace `Cargo.toml`, then publish a GitHub release
+tagged `v<version>`. The `Release` workflow checks the tag against the
+workspace version and publishes `gpui-playwright-selectors`, then
+`gpui-playwright`, with the `CARGO_RELEASE_TOKEN` secret.
