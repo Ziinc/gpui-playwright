@@ -14,7 +14,7 @@ tauri-build = { version = "2", features = [] }
 
 [dependencies]
 gpui-kit = { version = "=0.7.3", default-features = false, features = ["component", "assets"] }
-gpui-playwright = { path = "../../crates/server", features = ["evaluate"] }
+gpui-playwright = { path = "../../crates/server", features = ["evaluate", "painted-text"] }
 tauri = { version = "2.12", features = ["unstable"] }
 # The tauri-gpui branch on gpui-pre =0.3.9, the snapshot gpui-kit 0.7.3 uses.
 tauri-plugin-gpui = { git = "https://github.com/ziinc/tauri-gpui", branch = "claude/project-thread-h8aiom" }

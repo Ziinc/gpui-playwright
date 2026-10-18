@@ -57,7 +57,8 @@ enum Object {
     },
     RequestContext,
     /// A script result `evaluateHandle` or `waitForFunction` returned, kept
-    /// as its `SerializedValue`.
+    /// as its `SerializedValue`. Only scripts create one.
+    #[cfg_attr(not(feature = "evaluate"), allow(dead_code))]
     JsHandle {
         page: String,
         value: Value,

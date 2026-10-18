@@ -2,7 +2,9 @@
 //! elements gpui-base observed in the window's last completed frame.
 
 use gpui::{ElementId, Role, Window};
-use gpui_kit::base::test_support::{self, ElementSnapshot, TextSnapshot};
+#[cfg(feature = "painted-text")]
+use gpui_kit::base::test_support::TextSnapshot;
+use gpui_kit::base::test_support::{self, ElementSnapshot};
 use gpui_playwright_selectors::{Checked, Node, Rect, Tree};
 use std::collections::HashMap;
 
@@ -18,14 +20,15 @@ impl Snapshot {
     pub fn capture(window: &Window) -> Self {
         let items = test_support::snapshots(window)
             .into_iter()
-            .map(Item::Element)
-            .chain(
-                test_support::texts(window)
-                    .into_iter()
-                    .enumerate()
-                    .map(|(i, text)| Item::Text(i, text)),
-            )
-            .collect();
+            .map(Item::Element);
+        #[cfg(feature = "painted-text")]
+        let items = items.chain(
+            test_support::texts(window)
+                .into_iter()
+                .enumerate()
+                .map(|(i, text)| Item::Text(i, text)),
+        );
+        let items = items.collect();
         Self::build(items, title(window))
     }
 
@@ -62,7 +65,7 @@ impl Snapshot {
         // its label.
         let shows_text: Vec<bool> = children
             .iter()
-            .map(|list| list.iter().any(|&c| matches!(items[c], Item::Text(..))))
+            .map(|list| list.iter().any(|&c| items[c].is_text()))
             .collect();
         // Document order: siblings top to bottom, then left to right.
         let order_key = |i: &usize| {
@@ -84,6 +87,7 @@ impl Snapshot {
         while let Some((i, parent)) = stack.pop() {
             let node = match &items[i] {
                 Item::Element(snapshot) => element_node(snapshot, shows_text[i]),
+                #[cfg(feature = "painted-text")]
                 Item::Text(_, text) => text_node(text),
             };
             let index = tree.push(parent, node);
@@ -98,13 +102,23 @@ impl Snapshot {
 /// text components painted inside them.
 enum Item {
     Element(ElementSnapshot),
+    #[cfg(feature = "painted-text")]
     Text(usize, TextSnapshot),
 }
 
 impl Item {
+    fn is_text(&self) -> bool {
+        match self {
+            Item::Element(_) => false,
+            #[cfg(feature = "painted-text")]
+            Item::Text(..) => true,
+        }
+    }
+
     fn path(&self) -> Vec<ElementId> {
         match self {
             Item::Element(snapshot) => snapshot.path().to_vec(),
+            #[cfg(feature = "painted-text")]
             // Text has no id of its own; its paint order tells texts apart.
             Item::Text(i, text) => {
                 let mut path = text.path().to_vec();
@@ -120,6 +134,7 @@ impl Item {
     fn bounds(&self) -> gpui::Bounds<gpui::Pixels> {
         match self {
             Item::Element(snapshot) => snapshot.bounds(),
+            #[cfg(feature = "painted-text")]
             Item::Text(_, text) => text.bounds(),
         }
     }
@@ -155,7 +170,7 @@ fn element_node(snapshot: &ElementSnapshot, shows_text: bool) -> Node {
             snapshot.label().unwrap_or_default().to_owned()
         },
         value: snapshot.value().map(str::to_owned),
-        description: snapshot.description().map(str::to_owned),
+        description: description(snapshot).map(str::to_owned),
         test_id: snapshot.path().last().map(|id| id.to_string()),
         checked,
         disabled: snapshot.disabled().unwrap_or(false),
@@ -176,8 +191,8 @@ fn element_node(snapshot: &ElementSnapshot, shows_text: bool) -> Node {
         // `getByPlaceholder` and `getByTitle` match these. A tooltip is the
         // description gpui-kit gives a control, as `title` is on the web.
         attributes: [
-            ("placeholder", snapshot.placeholder()),
-            ("title", snapshot.description()),
+            ("placeholder", placeholder(snapshot)),
+            ("title", description(snapshot)),
         ]
         .into_iter()
         .filter_map(|(name, value)| Some((name.to_owned(), value?.to_owned())))
@@ -185,6 +200,27 @@ fn element_node(snapshot: &ElementSnapshot, shows_text: bool) -> Node {
     }
 }
 
+#[cfg(feature = "painted-text")]
+fn description(snapshot: &ElementSnapshot) -> Option<&str> {
+    snapshot.description()
+}
+
+#[cfg(not(feature = "painted-text"))]
+fn description(_: &ElementSnapshot) -> Option<&str> {
+    None
+}
+
+#[cfg(feature = "painted-text")]
+fn placeholder(snapshot: &ElementSnapshot) -> Option<&str> {
+    snapshot.placeholder()
+}
+
+#[cfg(not(feature = "painted-text"))]
+fn placeholder(_: &ElementSnapshot) -> Option<&str> {
+    None
+}
+
+#[cfg(feature = "painted-text")]
 fn text_node(text: &TextSnapshot) -> Node {
     let bounds = text.bounds();
     let alt = text.is_alternative().then(|| text.text().to_owned());
