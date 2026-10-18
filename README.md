@@ -30,13 +30,14 @@ test('adds a todo', async ({ page }) => {
 
 ```toml
 [features]
-playwright = ["dep:gpui-playwright"]
+playwright = ["dep:gpui-playwright", "gpui-playwright/painted-text"]
 
 [dependencies]
 gpui-playwright = { git = "https://github.com/Ziinc/gpui-playwright", optional = true }
 
-# Until these land in a gpui-kit release: rendered text, placeholders, titles
-# and alt text come from the Ziinc/gpui-kit fork (0.7.3 plus the patches).
+# `painted-text` (rendered text, placeholders, titles and alt text) needs the
+# Ziinc/gpui-kit fork (0.7.3 plus the patches) until they land in a gpui-kit
+# release. Without the feature, gpui-playwright builds on gpui-kit as published.
 [patch.crates-io]
 gpui-kit = { git = "https://github.com/Ziinc/gpui-kit", rev = "7ea1125954e6701d849fd448aab08ab2ac63d07f" }
 gpui-base = { git = "https://github.com/Ziinc/gpui-kit", rev = "7ea1125954e6701d849fd448aab08ab2ac63d07f" }
@@ -85,18 +86,20 @@ state, bounds and the GPUI element id. gpui-kit components register
 themselves; give your own elements an id and call `.test_support()` (plus
 `.aria_label(...)`) to make them selectable.
 
-Text is what gpui-kit's text components paint (`Label`, `Kbd`, inline text and
-the components built on them), each a text node under the nearest observed
-element. Wrap your own text with `.test_text("…")`, or an image with
+With the `painted-text` feature, text is what gpui-kit's text components
+paint (`Label`, `Kbd`, inline text and the components built on them), each a
+text node under the nearest observed element. Wrap your own text with `.test_text("…")`, or an image with
 `.test_alt_text("…")`, both from `gpui_base::TestTextExt`. Plain GPUI text
 (`div().child("x")`) and text inside cached views are not seen yet; that needs
-a hook in GPUI itself.
+a hook in GPUI itself. Without the feature, an element's text is its
+accessible label, and `getByPlaceholder`, `getByTitle` and `getByAltText` find
+nothing.
 
 | Playwright | Support |
 | --- | --- |
 | `getByRole` (name, exact, checked, disabled, expanded, selected, includeHidden, level, pressed) | Yes |
 | `getByLabel`, `getByText`, `getByTestId` (the GPUI element id) | Yes |
-| `getByPlaceholder` (input placeholders), `getByTitle` (accessible description, such as a button's tooltip), `getByAltText` (an `Avatar`'s name, `.test_alt_text`) | Yes |
+| `getByPlaceholder` (input placeholders), `getByTitle` (accessible description, such as a button's tooltip), `getByAltText` (an `Avatar`'s name, `.test_alt_text`) | With the `painted-text` feature |
 | `locator('#id')`, `[attr=value]`, `filter({ has, hasNot, hasText, hasNotText, visible })`, `and`, `or`, `first`, `last`, `nth`, chaining | Yes |
 | Other CSS and XPath selectors | Error that names the selector |
 | `click`, `dblclick`, `tap`, `hover`, `check`, `uncheck`, `setChecked`, `fill`, `clear`, `press`, `pressSequentially`, `focus` | Yes, with actionability waits and strict mode |

@@ -25,6 +25,10 @@ rquickjs = { version = "0.14", optional = true }
 # `page.evaluate`, `locator.evaluate`, `waitForFunction` and
 # `Server::expose_function`, run by an embedded QuickJS.
 evaluate = ["dep:rquickjs"]
+# Painted text (`getByText` on labels and inline text), placeholders, titles
+# and alt text. Needs gpui-kit's text observation, which is not in a gpui-kit
+# release yet: patch gpui-kit to the Ziinc/gpui-kit fork (see the README).
+painted-text = []
 
 [target.'cfg(any(target_os = "linux", target_os = "freebsd"))'.dependencies]
 raw-window-handle = "0.6"

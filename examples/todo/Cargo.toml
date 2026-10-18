@@ -8,7 +8,7 @@ license.workspace = true
 
 [features]
 default = ["playwright"]
-playwright = ["dep:gpui-playwright", "gpui-playwright/evaluate"]
+playwright = ["dep:gpui-playwright", "gpui-playwright/evaluate", "gpui-playwright/painted-text"]
 
 [dependencies]
 gpui-kit = { workspace = true, features = ["component", "assets"] }
