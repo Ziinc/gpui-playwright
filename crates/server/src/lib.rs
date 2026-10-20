@@ -146,6 +146,18 @@ impl Server {
         self
     }
 
+    /// Picks which open window a `context.newPage()` adopts, from the
+    /// windows no other page holds. Without it, a page adopts the first of
+    /// them. An adopted window stays open when its page or context closes,
+    /// unlike one [`Self::on_new_page`] opens. Ignored with `on_new_page`.
+    pub fn on_adopt_page(
+        mut self,
+        pick: impl Fn(&[AnyWindowHandle], &mut App) -> Option<AnyWindowHandle> + 'static,
+    ) -> Self {
+        self.hooks.adopt_page = Some(Rc::new(pick));
+        self
+    }
+
     /// Applies `colorScheme` from context options and `page.emulateMedia()`.
     pub fn on_color_scheme(mut self, apply: impl Fn(ColorScheme, &mut App) + 'static) -> Self {
         self.hooks.color_scheme = Some(Rc::new(apply));

@@ -30,6 +30,7 @@ const POLL: Duration = Duration::from_millis(16);
 
 type ResetHook = Rc<dyn Fn(&mut App)>;
 type OpenPageHook = Rc<dyn Fn(&mut App) -> Option<AnyWindowHandle>>;
+type AdoptPageHook = Rc<dyn Fn(&[AnyWindowHandle], &mut App) -> Option<AnyWindowHandle>>;
 type ColorSchemeHook = Rc<dyn Fn(ColorScheme, &mut App)>;
 type NavigateHook = Rc<dyn Fn(&str, AnyWindowHandle, &mut App) -> Result<(), String>>;
 
@@ -38,6 +39,7 @@ type NavigateHook = Rc<dyn Fn(&str, AnyWindowHandle, &mut App) -> Result<(), Str
 pub(crate) struct Hooks {
     pub new_context: Option<ResetHook>,
     pub new_page: Option<OpenPageHook>,
+    pub adopt_page: Option<AdoptPageHook>,
     pub color_scheme: Option<ColorSchemeHook>,
     pub navigate: Option<NavigateHook>,
     #[cfg(feature = "evaluate")]
@@ -581,10 +583,16 @@ impl Session {
             }
             None => {
                 let bound = self.claimed.borrow().clone();
-                let window = cx
+                let free: Vec<AnyWindowHandle> = cx
                     .update(|cx| cx.windows())
                     .into_iter()
-                    .find(|window| !bound.contains(window))
+                    .filter(|window| !bound.contains(window))
+                    .collect();
+                let picked = match self.hooks.adopt_page.clone() {
+                    Some(pick) => cx.update(|cx| pick(&free, cx)),
+                    None => free.first().copied(),
+                };
+                let window = picked
                     .ok_or_else(|| {
                         PwError::new(
                             "No window to open as a page: every application window already has a page. \
