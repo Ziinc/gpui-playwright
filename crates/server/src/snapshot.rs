@@ -180,6 +180,7 @@ fn element_node(snapshot: &ElementSnapshot, shows_text: bool) -> Node {
         level: None,
         readonly: false,
         focused: snapshot.focused().unwrap_or(false),
+        focus_known: snapshot.focused().is_some(),
         visible: snapshot.visible() || has_box(bounds),
         in_viewport: snapshot.visible(),
         bounds: Rect {

@@ -766,6 +766,7 @@ impl Session {
         let force = call.bool("force");
         let locator = target.describe();
         let previous: Cell<Option<Rect>> = Cell::new(None);
+        let scroller = Scroller::default();
         self.retry(call, cx, |cx| {
             let snapshot = capture(window, cx)?;
             let mut log = vec![format!("  - waiting for {locator}")];
@@ -802,8 +803,9 @@ impl Session {
                 }
             }
             if !node.in_viewport {
-                scroll_toward(window, &snapshot, index, cx);
+                scroller.toward(window, &snapshot, index, cx);
                 log.push("    - scrolling into view if needed".into());
+                log.push("    - element is outside of the viewport".into());
                 previous.set(None);
                 return Ok(Step::Wait(log));
             }
@@ -1226,6 +1228,12 @@ impl Session {
     }
 
     /// Clicks the target unless it already has focus, so key input reaches it.
+    ///
+    /// When the target reports its focus, keys are only sent once it holds
+    /// it: when a click misses (the target's middle clipped by a scroll
+    /// container), it wheels from the target's visible edge to bring it into
+    /// view and clicks again, until the timeout. Typing into whatever else has focus would be
+    /// worse than failing.
     async fn focus_target(
         &self,
         call: &Call,
@@ -1237,12 +1245,16 @@ impl Session {
     ) -> Result<(), PwError> {
         let bounds = self.actionable(call, target, window, checks, cx).await?;
         let snapshot = capture(window, cx)?;
-        let focused = target
-            .single(&snapshot)?
-            .is_some_and(|index| snapshot.tree.node(index).focused);
-        if !focused {
+        let Some(index) = target.single(&snapshot)? else {
+            return Ok(());
+        };
+        let node = snapshot.tree.node(index);
+        if node.focused {
+            return Ok(());
+        }
+        let modifiers = self.modifiers_of(page);
+        if !node.focus_known {
             let (x, y) = bounds.center();
-            let modifiers = self.modifiers_of(page);
             self.click_at(
                 page,
                 window,
@@ -1253,7 +1265,71 @@ impl Session {
                 cx,
             );
             settle(window, cx).await;
+            return Ok(());
         }
+
+        let locator = target.describe();
+        let attempt = Cell::new(0usize);
+        let scroller = Scroller::default();
+        // The next step (0 click, 1 wheel from the top edge, 2 from the
+        // bottom) and where the target was when last wheeled.
+        let state: Cell<(u8, Option<Rect>)> = Cell::new((0, None));
+        self.retry(call, cx, |cx| {
+            let snapshot = capture(window, cx)?;
+            let mut log = vec![format!("  - waiting for {locator} to be focused")];
+            let Some(index) = target.single(&snapshot)? else {
+                return Ok(Step::Wait(log));
+            };
+            let node = snapshot.tree.node(index);
+            if node.focused {
+                return Ok(Step::Done(()));
+            }
+            let n = attempt.get();
+            attempt.set(n + 1);
+            if !node.in_viewport {
+                log.push("    - element is outside of the viewport".into());
+                scroller.toward(window, &snapshot, index, cx);
+                return Ok(Step::Wait(log));
+            }
+            // Click the middle. A control clipped by a scroll container may
+            // show only a sliver, so if the middle doesn't take focus, wheel
+            // from just inside its top edge, then its bottom edge, and click
+            // again as soon as a wheel moves it.
+            let b = node.bounds;
+            let (x, y) = b.center();
+            let (phase, wheeled_from) = state.get();
+            let moved = wheeled_from.is_some_and(|from: Rect| from.y != b.y);
+            if phase == 0 || moved {
+                if n > 0 {
+                    log.push("    - element did not receive focus; retrying".into());
+                }
+                self.click_at(
+                    page,
+                    window,
+                    input::pos(x, y),
+                    MouseButton::Left,
+                    1,
+                    modifiers,
+                    cx,
+                );
+                state.set((1, None));
+            } else {
+                log.push("    - element did not receive focus; scrolling it into view".into());
+                let inset = (b.height / 2.).min(3.);
+                let (wy, dy) = if phase == 1 {
+                    (b.y + inset, b.height)
+                } else {
+                    (b.y + b.height - inset, -b.height)
+                };
+                let _ = window.update(cx, |_, window, cx| {
+                    input::wheel(window, input::pos(x, wy), 0., dy, cx)
+                });
+                state.set(((phase + 1) % 3, Some(b)));
+            }
+            Ok(Step::Wait(log))
+        })
+        .await?;
+        settle(window, cx).await;
         Ok(())
     }
 
@@ -2096,31 +2172,78 @@ async fn settle(window: AnyWindowHandle, cx: &mut AsyncApp) {
     }
 }
 
-/// Scrolls the nearest on-screen ancestor of `index` toward it, as
-/// `scrollIntoViewIfNeeded` does, with a wheel event over that ancestor.
-fn scroll_toward(window: AnyWindowHandle, snapshot: &Snapshot, index: usize, cx: &mut AsyncApp) {
-    let tree = &snapshot.tree;
+/// Turns the mouse wheel to bring an element toward the viewport, as
+/// `scrollIntoViewIfNeeded` does. It wheels over what most likely scrolls the
+/// element: its nearest ancestor in view, else the elements in view nearest
+/// to it in tree order (usually in the same scroll container), just inside
+/// their top or bottom edge, since a clipping container may show only a
+/// sliver of them. When a wheel leaves the element where it was, the next
+/// turn tries the next spot.
+#[derive(Default)]
+struct Scroller {
+    pick: Cell<usize>,
+    last: Cell<Option<Rect>>,
+}
+
+impl Scroller {
+    fn toward(
+        &self,
+        window: AnyWindowHandle,
+        snapshot: &Snapshot,
+        index: usize,
+        cx: &mut AsyncApp,
+    ) {
+        let tree = &snapshot.tree;
+        let target = tree.node(index).bounds;
+        if self.last.get() == Some(target) {
+            self.pick.set(self.pick.get() + 1);
+        }
+        self.last.set(Some(target));
+        let _ = window.update(cx, |_, window, cx| {
+            let viewport = window.viewport_size();
+            let screen = Rect {
+                x: 0.,
+                y: 0.,
+                width: f32::from(viewport.width) as f64,
+                height: f32::from(viewport.height) as f64,
+            };
+            let spots = wheel_spots(tree, index, &screen);
+            let (ox, oy) = spots[self.pick.get() % spots.len()];
+            let (tx, ty) = target.center();
+            input::wheel(window, input::pos(ox, oy), tx - ox, ty - oy, cx);
+        });
+    }
+}
+
+/// Where to turn the wheel to scroll element `index`, most likely first.
+fn wheel_spots(
+    tree: &gpui_playwright_selectors::Tree,
+    index: usize,
+    screen: &Rect,
+) -> Vec<(f64, f64)> {
     let mut ancestor = tree.parent(index);
     while let Some(parent) = ancestor {
-        if tree.node(parent).in_viewport {
-            break;
+        // The root covers the whole window: it says nothing about which
+        // container clips the target.
+        if tree.node(parent).in_viewport && tree.parent(parent).is_some() {
+            return vec![intersect(&tree.node(parent).bounds, screen).center()];
         }
         ancestor = tree.parent(parent);
     }
-    let target = tree.node(index).bounds;
-    let _ = window.update(cx, |_, window, cx| {
-        let viewport = window.viewport_size();
-        let screen = Rect {
-            x: 0.,
-            y: 0.,
-            width: f32::from(viewport.width) as f64,
-            height: f32::from(viewport.height) as f64,
-        };
-        let over = ancestor.map_or(screen, |a| intersect(&tree.node(a).bounds, &screen));
-        let (ox, oy) = over.center();
-        let (tx, ty) = target.center();
-        input::wheel(window, input::pos(ox, oy), tx - ox, ty - oy, cx);
-    });
+    let mut near: Vec<usize> = (0..tree.len())
+        .filter(|&i| i != index && tree.node(i).in_viewport && tree.node(i).bounds.width > 0.)
+        .collect();
+    near.sort_by_key(|&i| (i.abs_diff(index), i));
+    near.into_iter()
+        .take(4)
+        .flat_map(|i| {
+            let r = intersect(&tree.node(i).bounds, screen);
+            let inset = (r.height / 2.).min(3.);
+            let x = r.x + r.width / 2.;
+            [(x, r.y + inset), (x, r.y + r.height - inset)]
+        })
+        .chain([screen.center()])
+        .collect()
 }
 
 fn intersect(a: &Rect, b: &Rect) -> Rect {

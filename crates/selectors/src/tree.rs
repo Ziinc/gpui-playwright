@@ -47,6 +47,9 @@ pub struct Node {
     pub level: Option<u32>,
     pub readonly: bool,
     pub focused: bool,
+    /// Whether `focused` was observed. When false, `focused` is always false
+    /// and says nothing about where keyboard input goes.
+    pub focus_known: bool,
     /// Rendered with a non-empty box, as Playwright's `visible`. An element
     /// scrolled or laid out outside the window is still visible.
     pub visible: bool,

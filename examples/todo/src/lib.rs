@@ -10,6 +10,7 @@ use gpui_kit::{
         input::{Input, InputEvent, InputState},
         label::Label,
     },
+    prelude::FluentBuilder,
     *,
 };
 
@@ -24,6 +25,8 @@ struct Todo {
 pub struct TodoStore {
     todos: Vec<Todo>,
     next_id: usize,
+    /// Shows the notes panel (`todo://notes`), a scroll fixture for tests.
+    notes: bool,
 }
 
 impl TodoStore {
@@ -70,6 +73,9 @@ pub fn store(cx: &App) -> Entity<TodoStore> {
 
 pub struct TodoView {
     input: Entity<InputState>,
+    note: Entity<InputState>,
+    tag: Entity<InputState>,
+    hidden: Entity<InputState>,
 }
 
 impl TodoView {
@@ -84,7 +90,15 @@ impl TodoView {
         })
         .detach();
         cx.observe(&store(cx), |_, _, cx| cx.notify()).detach();
-        Self { input }
+        let note = cx.new(|cx| InputState::new(window, cx));
+        let tag = cx.new(|cx| InputState::new(window, cx));
+        let hidden = cx.new(|cx| InputState::new(window, cx));
+        Self {
+            input,
+            note,
+            tag,
+            hidden,
+        }
     }
 
     fn add(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -106,6 +120,7 @@ impl Render for TodoView {
         let store = store(cx).read(cx);
         let todos = store.todos.clone();
         let left = format!("{} of {} left", store.remaining(), store.todos.len());
+        let notes = store.notes;
         let theme = cx.theme();
         let dark = theme.mode.is_dark();
 
@@ -226,6 +241,32 @@ impl Render for TodoView {
                             )
                     })),
             )
+            // A short scrolling panel: "Note" sits at its bottom edge with only
+            // a sliver showing, "Tag" is entirely below it. "Hidden" is clipped
+            // by a panel that doesn't scroll, so nothing can bring it into view.
+            .when(notes, |root| {
+                root.child(
+                    div()
+                        .h(px(4.))
+                        .flex_none()
+                        .overflow_hidden()
+                        .child(div().h(px(40.)))
+                        .child(Input::new(&self.hidden).id("hidden").aria_label("Hidden")),
+                )
+                .child(
+                    div()
+                        .id("notes")
+                        .h(px(120.))
+                        .flex_none()
+                        .overflow_y_scroll()
+                        .border_1()
+                        .border_color(theme.border)
+                        .child(div().h(px(112.)))
+                        .child(Input::new(&self.note).id("note").aria_label("Note"))
+                        .child(div().h(px(200.)))
+                        .child(Input::new(&self.tag).id("tag").aria_label("Tag")),
+                )
+            })
     }
 }
 
@@ -253,6 +294,13 @@ pub fn playwright(server: gpui_playwright::Server) -> gpui_playwright::Server {
         })
         // A deep link, so tests can `page.goto('todo://clear-completed')`.
         .on_navigate(|url, _, cx| match url {
+            "todo://notes" => {
+                store(cx).update(cx, |store, cx| {
+                    store.notes = true;
+                    cx.notify();
+                });
+                Ok(())
+            }
             "todo://clear-completed" => {
                 store(cx).update(cx, |store, cx| {
                     store.todos.retain(|todo| !todo.done);
