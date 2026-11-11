@@ -254,6 +254,8 @@ pub(crate) fn wheel(window: &mut Window, position: Point<Pixels>, dx: f64, dy: f
         ScrollWheelEvent {
             position,
             delta: ScrollDelta::Pixels(pos(-dx, -dy)),
+            // Held keys, so Shift+wheel reaches the app as it does natively.
+            modifiers: window.modifiers(),
             ..Default::default()
         }
         .to_platform_input(),
@@ -264,6 +266,39 @@ pub(crate) fn wheel(window: &mut Window, position: Point<Pixels>, dx: f64, dy: f
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn wheel_carries_held_modifiers() {
+        use gpui::{Context, InteractiveElement, IntoElement, ParentElement, Render, Styled, div};
+        use std::{cell::Cell, rc::Rc};
+
+        struct View(Rc<Cell<Option<bool>>>);
+        impl Render for View {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                let seen = self.0.clone();
+                div()
+                    .size_full()
+                    .child("x")
+                    .on_scroll_wheel(move |e, _, _| {
+                        seen.set(Some(e.modifiers.shift));
+                    })
+            }
+        }
+
+        let mut cx = gpui::TestAppContext::single();
+        let seen = Rc::new(Cell::new(None));
+        let view_seen = seen.clone();
+        let (_, cx) = cx.add_window_view(|_, _| View(view_seen));
+        cx.update(|window, cx| {
+            let shift = Modifiers {
+                shift: true,
+                ..Default::default()
+            };
+            set_modifiers(window, shift, cx);
+            wheel(window, pos(5., 5.), 0., 10., cx);
+        });
+        assert_eq!(seen.get(), Some(true));
+    }
 
     #[test]
     fn maps_playwright_keys() {
