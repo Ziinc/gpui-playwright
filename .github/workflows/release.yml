@@ -1,0 +1,110 @@
+name: Release
+
+# Pushing a `vX.Y.Z` tag publishes gpui-playwright-selectors and gpui-playwright to
+# crates.io and creates a GitHub release for the tag with generated notes. The
+# tag must match the workspace version and point at a commit on main.
+# Re-running is safe: versions already on crates.io are skipped, and an
+# existing release is kept.
+#
+# crates.io auth: the CARGO_REGISTRY_TOKEN secret when it is set (needed for a
+# crate's first publish), otherwise trusted publishing, whose publisher must
+# name this repository, `release.yml` and the `release` environment.
+on:
+  push:
+    tags: ["v*.*.*"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+    environment: release
+    permissions:
+      contents: write
+      id-token: write
+    env:
+      CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check the tag
+        run: |
+          version=$(cargo metadata --no-deps --format-version 1 \
+            | jq -r '.packages[] | select(.name == "gpui-playwright-selectors") | .version')
+          if [ "${GITHUB_REF_NAME#v}" != "$version" ]; then
+            echo "::error::tag $GITHUB_REF_NAME does not match the crate version $version"
+            exit 1
+          fi
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "::error::tag $GITHUB_REF_NAME is not on main"
+            exit 1
+          fi
+
+      - name: Find unpublished crates
+        id: plan
+        run: |
+          pending=""
+          for crate in gpui-playwright-selectors gpui-playwright; do
+            version=$(cargo metadata --no-deps --format-version 1 \
+              | jq -r --arg crate "$crate" '.packages[] | select(.name == $crate) | .version')
+            if curl -sf -o /dev/null -A "gpui-playwright-release (https://github.com/${GITHUB_REPOSITORY})" \
+              "https://crates.io/api/v1/crates/$crate/$version"; then
+              echo "$crate $version is already on crates.io; skipping"
+            else
+              pending="$pending $crate"
+            fi
+          done
+          echo "pending=${pending# }" >> "$GITHUB_OUTPUT"
+
+      # `cargo publish` builds each crate before uploading it, which links
+      # GPUI's Linux platform.
+      - name: System dependencies
+        if: steps.plan.outputs.pending != ''
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libvulkan-dev \
+            libfontconfig-dev libfreetype-dev libasound2-dev libssl-dev
+      - uses: dtolnay/rust-toolchain@stable
+        if: steps.plan.outputs.pending != ''
+      - uses: Swatinem/rust-cache@v2
+        if: steps.plan.outputs.pending != ''
+
+      - uses: rust-lang/crates-io-auth-action@v1
+        id: auth
+        if: steps.plan.outputs.pending != '' && env.CARGO_REGISTRY_TOKEN == ''
+      - name: Publish to crates.io
+        if: steps.plan.outputs.pending != ''
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ env.CARGO_REGISTRY_TOKEN || steps.auth.outputs.token }}
+          PENDING: ${{ steps.plan.outputs.pending }}
+        run: |
+          # Dependencies first; cargo waits for each upload to reach the index.
+          for crate in $PENDING; do
+            cargo publish -p "$crate" --locked
+          done
+
+      - name: Create the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            echo "release $GITHUB_REF_NAME already exists; skipping"
+            exit 0
+          fi
+          args=(--verify-tag --generate-notes --title "$GITHUB_REF_NAME")
+          # Notes cover the changes since the previous version tag.
+          if previous=$(git describe --tags --abbrev=0 --match 'v*.*.*' "$GITHUB_REF_NAME^" 2>/dev/null); then
+            args+=(--notes-start-tag "$previous")
+          fi
+          gh release create "$GITHUB_REF_NAME" "${args[@]}"
